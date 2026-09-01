@@ -3,11 +3,6 @@
 """
 效果评测报告生成器 v2（对齐效果测试报告模版.html的 6 章结构）。
 
-THVV 对外交付版：移植自 maas-test-management origin/master
-apps/maas-server/core/infra/reports/eval_report_v2.py，
-仅保留本地目录生成路径 generate_report()，已移除平台 COS 依赖。
-
-
 数据来源（evalscope 产出目录）：
   reviews/<model>/*.jsonl      每行一题（含 messages / sample_score / perf_metrics）
   predictions/<model>/skipped_samples.jsonl   跳过样本（含 error / partial_trajectory）

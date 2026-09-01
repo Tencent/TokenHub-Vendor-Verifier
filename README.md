@@ -127,6 +127,38 @@ thvv/eval/results/<provider>-<model>-<timestamp>/
 
 ---
 
+## 性能验收标准
+
+供应商性能验收判定标准见 [`性能验收标准.xlsx`](./性能验收标准.xlsx)，要点如下：
+
+**测试要求**
+
+1. 低并发预热 5min，排除冷启动影响
+2. 按并发梯度压测 10–15min，稳定后采集数据；TPM/RPM 未达承诺规格时，请求成功率须满足 SLA
+
+**TTFT / 请求成功率**（按 InputTokens 增量，不含 cache）
+
+| InputTokens | 腾讯侧标准 |
+|------|------|
+| <6K | P90<5s |
+| 6～16K | P90<5s |
+| 16～32K | P90<8s |
+| 32～64K | P90<15s |
+| 64～128K | P90<35s |
+| 128～256K | P90<70s |
+
+**OTPS**
+
+| 模型激活参数 | 档位/Tier | 腾讯侧 OTPS 要求 |
+|------|------|------|
+| >10B 的模型 | L1 | ≥ 30 tokens/s |
+| | L2 | ≥ 10 tokens/s |
+| ≤10B 的模型 | / | ≥ 100 tokens/s |
+
+> 以上均使用腾讯提供的 benchmark 验证，详细数据见 `性能验收标准.xlsx`。
+
+---
+
 ## 凭据安全
 
 - API Key 只放在 `configs/.env` 或环境变量，**不要写进命令行与代码**
@@ -136,4 +168,3 @@ thvv/eval/results/<provider>-<model>-<timestamp>/
 ## 版本说明
 
 - evalscope 固定 `1.9.0`（2026-07-20 已验证组合，勿随意升级）
-- `eval_report_v2.py` 移植自 maas-test-management（origin/master），仅保留本地生成路径；上游同步用 diff 对比同名文件

@@ -42,8 +42,8 @@ import tarfile
 from datetime import datetime
 
 # v2 效果评测报告生成器（eval_report_v2.py 与本脚本同目录）：
-# 六章模版（核心结论/效果稳定性/性能/配置/逐题证据/异常跳过），移植自
-# maas-test-management origin/master。导入失败时降级为「不出报告」，绝不阻断主流程。
+# 六章模版（核心结论/效果稳定性/性能/配置/逐题证据/异常跳过）。
+# 导入失败时降级为「不出报告」，绝不阻断主流程。
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
     import eval_report_v2
