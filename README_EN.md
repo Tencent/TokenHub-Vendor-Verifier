@@ -22,11 +22,14 @@ An all-in-one verification toolkit for running **performance load tests** and **
 ```
 ├── quickstart.sh              # One-shot entrypoint (check / install / perf / eval)
 ├── .gitignore                 # Artifacts and dataset caches are not committed
+├── 性能验收标准.xlsx          # Performance acceptance criteria (perf)
+├── 精度验收标准.xlsx          # Quality (accuracy) acceptance criteria (eval)
 └── thvv/
     ├── cli.py                 # Unified CLI (thvv perf ... / thvv eval ...)
     ├── quickstart.sh          # Sub-command dispatcher
     ├── configs/
     │   ├── env.example        # Config template (copy to .env to use)
+    │   ├── env.demo           # .env demo (OpenAI + Anthropic protocols)
     │   └── .env               # Actual credentials (not committed)
     ├── perf/                  # Performance load testing (run.sh + scripts/ + datasets/)
     │   └── results/           # Artifacts: perf-report.html + perf-report.xlsx
@@ -127,7 +130,9 @@ thvv/eval/results/<provider>-<model>-<timestamp>/
 
 ---
 
-## Performance Acceptance Criteria
+## Acceptance Criteria
+
+### Performance Acceptance Criteria
 
 Vendor performance acceptance criteria are defined in [`性能验收标准.xlsx`](./性能验收标准.xlsx). Key points:
 
@@ -156,6 +161,27 @@ Vendor performance acceptance criteria are defined in [`性能验收标准.xlsx`
 | ≤10B models | / | ≥ 100 tokens/s |
 
 > All of the above are verified using the Tencent-provided benchmark; see `性能验收标准.xlsx` for details.
+
+### Quality Acceptance Criteria
+
+Quality (accuracy) acceptance baselines are defined in [`精度验收标准.xlsx`](./精度验收标准.xlsx), with per-model accuracy allowed to float within **±2-4%**:
+
+| Dataset | kimi-k3 | HY3 | deepseek-v4-flash-0731 | hy4-preview |
+|------|:---:|:---:|:---:|:---:|
+| AIME2026 | 95 | 96.63 | 95.67 | 96 |
+| HLE | 44 | 29.74 | 32.35 | 34.33 |
+| MMLU_Pro | 89.52 | 87.36 | 87.25 | 85.96 |
+| Simple_QA | 46.1 | 34.41 | 37.56 | 33.7 |
+| GPQA-Diamond | 92.76 | 90.66 | 89.73 | 94.44 |
+| LongBench V2 (Short) | 72.22 | 65.54 | 68.89 | 67.56 |
+| τ²-Bench · 智慧零售 retail | 82.22 | 75.18 | 87.7 | 82.22 |
+| τ²-Bench · 电力技术支持 telecom | 71.53 | 76.49 | 98.42 | 77.14 |
+| τ²-Bench · 航空客服 airline | 66.52 | 63.45 | 68.05 | 74.7 |
+| τ²-Bench · OVERALL | 75.02 | 73.61 | 88.7 | 77.27 |
+| LIVE-CODE-BENCH | 93.18 | - | - | 86.92 |
+| SWE-bench_Verified_Mini_Agentic | - | - | - | 85.42 |
+
+> "-" means the model did not provide a result for that dataset; see `精度验收标准.xlsx` for details.
 
 ---
 

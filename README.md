@@ -22,11 +22,14 @@
 ```
 ├── quickstart.sh              # 一键入口（check / install / perf / eval）
 ├── .gitignore                 # 产物、数据集缓存不入库
+├── 性能验收标准.xlsx          # 性能验收标准（perf）
+├── 精度验收标准.xlsx          # 效果（精度）验收标准（eval）
 └── thvv/
     ├── cli.py                 # 统一 CLI（thvv perf ... / thvv eval ...）
     ├── quickstart.sh          # 子命令分发
     ├── configs/
     │   ├── env.example        # 配置模板（复制为 .env 使用）
+    │   ├── env.demo           # .env 演示样例（OpenAI + Anthropic 双协议）
     │   └── .env               # 实际凭据（不入库）
     ├── perf/                  # 性能压测（run.sh + scripts/ + datasets/）
     │   └── results/           # 产物：性能测试报告.html + 性能测试报告.xlsx
@@ -127,7 +130,9 @@ thvv/eval/results/<provider>-<model>-<timestamp>/
 
 ---
 
-## 性能验收标准
+## 验收标准
+
+### 性能验收标准
 
 供应商性能验收判定标准见 [`性能验收标准.xlsx`](./性能验收标准.xlsx)，要点如下：
 
@@ -156,6 +161,27 @@ thvv/eval/results/<provider>-<model>-<timestamp>/
 | ≤10B 的模型 | / | ≥ 100 tokens/s |
 
 > 以上均使用腾讯提供的 benchmark 验证，详细数据见 `性能验收标准.xlsx`。
+
+### 效果验收标准
+
+效果（精度）验收基线见 [`精度验收标准.xlsx`](./精度验收标准.xlsx)，各模型精度可在 **±2-4%** 上下浮动：
+
+| 数据集 | kimi-k3 | HY3 | deepseek-v4-flash-0731 | hy4-preview |
+|------|:---:|:---:|:---:|:---:|
+| AIME2026 | 95 | 96.63 | 95.67 | 96 |
+| HLE | 44 | 29.74 | 32.35 | 34.33 |
+| MMLU_Pro | 89.52 | 87.36 | 87.25 | 85.96 |
+| Simple_QA | 46.1 | 34.41 | 37.56 | 33.7 |
+| GPQA-Diamond | 92.76 | 90.66 | 89.73 | 94.44 |
+| LongBench V2 (Short) | 72.22 | 65.54 | 68.89 | 67.56 |
+| τ²-Bench · 智慧零售 retail | 82.22 | 75.18 | 87.7 | 82.22 |
+| τ²-Bench · 电力技术支持 telecom | 71.53 | 76.49 | 98.42 | 77.14 |
+| τ²-Bench · 航空客服 airline | 66.52 | 63.45 | 68.05 | 74.7 |
+| τ²-Bench · OVERALL | 75.02 | 73.61 | 88.7 | 77.27 |
+| LIVE-CODE-BENCH | 93.18 | - | - | 86.92 |
+| SWE-bench_Verified_Mini_Agentic | - | - | - | 85.42 |
+
+> "-" 表示该模型未提供该数据集结果；详细数据见 `精度验收标准.xlsx`。
 
 ---
 
