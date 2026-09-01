@@ -23,7 +23,7 @@ An all-in-one verification toolkit for running **performance load tests** and **
 ├── quickstart.sh              # One-shot entrypoint (check / install / perf / eval)
 ├── .gitignore                 # Artifacts and dataset caches are not committed
 ├── 性能验收标准.xlsx          # Performance acceptance criteria (perf)
-├── 精度验收标准.xlsx          # Quality (accuracy) acceptance criteria (eval)
+├── 效果验收标准.xlsx          # Quality acceptance criteria (eval)
 └── thvv/
     ├── cli.py                 # Unified CLI (thvv perf ... / thvv eval ...)
     ├── quickstart.sh          # Sub-command dispatcher
@@ -164,7 +164,7 @@ Vendor performance acceptance criteria are defined in [`性能验收标准.xlsx`
 
 ### Quality Acceptance Criteria
 
-Quality (accuracy) acceptance baselines are defined in [`精度验收标准.xlsx`](./精度验收标准.xlsx), with per-model accuracy allowed to float within **±2-4%**:
+Quality acceptance baselines are defined in [`效果验收标准.xlsx`](./效果验收标准.xlsx), with per-model accuracy allowed to float within **±2-4%**:
 
 | Dataset | kimi-k3 | HY3 | deepseek-v4-flash-0731 | hy4-preview |
 |------|:---:|:---:|:---:|:---:|
@@ -181,7 +181,7 @@ Quality (accuracy) acceptance baselines are defined in [`精度验收标准.xlsx
 | LIVE-CODE-BENCH | 93.18 | - | - | 86.92 |
 | SWE-bench_Verified_Mini_Agentic | - | - | - | 85.42 |
 
-> "-" means the model did not provide a result for that dataset; see `精度验收标准.xlsx` for details.
+> "-" means the model did not provide a result for that dataset; see `效果验收标准.xlsx` for details.
 
 ---
 

@@ -23,7 +23,7 @@
 ├── quickstart.sh              # 一键入口（check / install / perf / eval）
 ├── .gitignore                 # 产物、数据集缓存不入库
 ├── 性能验收标准.xlsx          # 性能验收标准（perf）
-├── 精度验收标准.xlsx          # 效果（精度）验收标准（eval）
+├── 效果验收标准.xlsx          # 效果验收标准（eval）
 └── thvv/
     ├── cli.py                 # 统一 CLI（thvv perf ... / thvv eval ...）
     ├── quickstart.sh          # 子命令分发
@@ -164,7 +164,7 @@ thvv/eval/results/<provider>-<model>-<timestamp>/
 
 ### 效果验收标准
 
-效果（精度）验收基线见 [`精度验收标准.xlsx`](./精度验收标准.xlsx)，各模型精度可在 **±2-4%** 上下浮动：
+效果验收基线见 [`效果验收标准.xlsx`](./效果验收标准.xlsx)，各模型精度可在 **±2-4%** 上下浮动：
 
 | 数据集 | kimi-k3 | HY3 | deepseek-v4-flash-0731 | hy4-preview |
 |------|:---:|:---:|:---:|:---:|
@@ -181,7 +181,7 @@ thvv/eval/results/<provider>-<model>-<timestamp>/
 | LIVE-CODE-BENCH | 93.18 | - | - | 86.92 |
 | SWE-bench_Verified_Mini_Agentic | - | - | - | 85.42 |
 
-> "-" 表示该模型未提供该数据集结果；详细数据见 `精度验收标准.xlsx`。
+> "-" 表示该模型未提供该数据集结果；详细数据见 `效果验收标准.xlsx`。
 
 ---
 
