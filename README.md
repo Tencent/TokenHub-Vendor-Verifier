@@ -10,7 +10,7 @@
 
 | 模块 | 说明 | 状态 |
 |------|------|:---:|
-| `perf` | 性能压测：1k~200k 输入长度档位 × 并发梯度全组合，含增速限流（429）应对、成功率早停、TPM 趋势图与**性能仪表盘** | ✅ |
+| `perf` | 性能压测：1k~200k 输入长度档位 × 并发梯度全组合，含增速限流（429）应对、成功率早停，产出 **HTML（37 列全指标 + 失败请求明细）+ xlsx 双报告** | ✅ |
 | `eval` | 效果评测：11 个主流数据集（AIME25/26、GPQA-Diamond、HLE、tau2-bench、MMLU-Pro、SimpleQA、LongBench v2、LiveCodeBench、SWE-Bench…），自动产出 **v2 六章效果评测报告** | ✅ |
 | `cache` | 上下文缓存基准 | 预留 |
 | `e2e` | 端到端协议验收 | 预留 |
@@ -29,7 +29,7 @@
     │   ├── env.example        # 配置模板（复制为 .env 使用）
     │   └── .env               # 实际凭据（不入库）
     ├── perf/                  # 性能压测（run.sh + scripts/ + datasets/）
-    │   └── results/           # 产物：xlsx / TPM 图 / 性能仪表盘.html
+    │   └── results/           # 产物：性能测试报告.html + 性能测试报告.xlsx
     ├── eval/                  # 效果评测（run.sh + scripts/ + datasets/）
     │   ├── scripts/run_eval.py       # 评测引擎（预检查 + 限流重试 + 打包）
     │   ├── scripts/eval_report_v2.py # v2 报告生成器（六章模版）
@@ -112,9 +112,18 @@ thvv/eval/results/<provider>-<model>-<timestamp>/
     └── reports/*.json           # evalscope 原始得分报告
 ```
 
-### 性能压测：`性能仪表盘.html` + xlsx + TPM 趋势图
+### 性能压测：`性能测试报告.html`（阅读版）+ `性能测试报告.xlsx`（指标版）
 
-总体结论卡 + 并发梯度矩阵（13 项指标）+ 失败原因聚合（429 限流自动识别与处置建议）。
+**HTML**（单文件离线可开，四章结构，指标与 xlsx 完全同口径）：
+
+1. **总体结论** — 总请求 / 成功 / 失败 / 总成功率 + 处置建议
+2. **并发梯度对比** — 37 列全指标矩阵：TTFT（Avg/Min/Max/P50/P90/P95/P99）、
+   TTLT / Rate / ITL（Avg/P50/P90/P95/P99）、Tokens、Avg Total Time(ms)、
+   Output TPM / Output TPS / Input TPM / TPM
+3. **失败分析** — 失败原因聚合（429 限流自动识别）+ 占比 + 处置建议
+4. **失败请求明细** — 逐条罗列所有失败请求（HTTP 状态码 / 请求 Body / 响应 Body / TTFT / TTLT）
+
+**xlsx**：38 列「性能指标」sheet（口径与 HTML 一致）；失败明细只放 HTML，不在 xlsx 重复。
 
 ---
 
