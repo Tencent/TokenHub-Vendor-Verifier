@@ -1,0 +1,42 @@
+# 效果评测依赖
+# 安装：pip install -r requirements.txt
+
+# 核心评测框架
+# 固定到 2026-07-20 已验证可用组合；不要用 >=，否则 CI 会自动升级到 evalscope 1.9.1。
+evalscope==1.9.0
+modelscope==1.38.1
+modelscope-hub==0.1.7
+openai==2.45.0
+
+# tau2-bench Agent 对话评测（可选，仅跑 tau2_bench 时需要）
+# 以下为 tau2-bench 的运行依赖；tau2 本体需单独安装：
+#   pip install git+https://github.com/sierra-research/tau2-bench@v0.2.0
+# 或由 eval/scripts/run_eval.py 在检测到 ImportError 时自动尝试安装。
+loguru
+litellm
+tenacity
+termcolor
+tabulate
+pydantic-settings
+python-dotenv
+typer
+rich
+
+# SWE-Bench 评测（可选，仅跑 swe_bench* 时需要）
+# swebench==4.1.0
+# ms-enclave>=0.0.5
+# docker>=7.0.0
+
+# 数据处理 / 报告生成
+# eval_report_v2.py 读取 configs/task_config.yaml 需要 PyYAML
+pyarrow==24.0.0
+PyYAML==6.0.3
+sseclient==0.0.27
+jsonlines==4.0.0
+tqdm==4.67.3
+nltk==3.9.4
+
+# 通用
+aiohttp==3.14.1
+jsonschema==4.17.3
+requests==2.34.2

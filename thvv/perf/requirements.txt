@@ -1,0 +1,12 @@
+# TokenHub 模型性能压测套件依赖（OpenAI 协议直连版）
+# 使用：pip install -r requirements.txt
+
+# 主压测器
+evalscope[perf]>=0.13.0
+
+# Tokenizer
+transformers>=4.40.0
+modelscope>=1.20.0
+
+# 报告生成
+openpyxl>=3.1.0

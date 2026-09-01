@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Config (contains API keys)
+configs/.env
+
+# Benchmark results
+perf/results/
+eval/results/
+results/
+
+# Backup / temp files
+*.bak
+tmp*.json
+
+# OS files
+.DS_Store
+Thumbs.db
