@@ -11,9 +11,7 @@ An all-in-one verification toolkit for running **performance load tests** and **
 | Module | Description | Status |
 |------|------|:---:|
 | `perf` | Performance load testing: full combination of input-length buckets (1k–200k) × concurrency ladders, with rate-limit (429) ramp-up handling, success-rate early stopping, and dual reports — **HTML (37-column full metrics + failed-request details) + xlsx** | ✅ |
-| `eval` | Quality evaluation: 11 mainstream datasets (AIME25/26, GPQA-Diamond, HLE, tau2-bench, MMLU-Pro, SimpleQA, LongBench v2, LiveCodeBench, SWE-Bench…), automatically producing the **v2 six-chapter evaluation report** | ✅ |
-| `cache` | Context-cache benchmark | Reserved |
-| `e2e` | End-to-end protocol acceptance | Reserved |
+| `eval` | Quality evaluation: 11 mainstream datasets (AIME25/26, GPQA-Diamond, HLE, tau2-bench, MMLU-Pro, SimpleQA, LongBench v2, LiveCodeBench, SWE-Bench…), automatically producing the **evaluation report** | ✅ |
 
 ---
 
@@ -33,11 +31,9 @@ An all-in-one verification toolkit for running **performance load tests** and **
     │   └── results/           # Artifacts: perf-report.html + perf-report.xlsx
     ├── eval/                  # Quality evaluation (run.sh + scripts/ + datasets/)
     │   ├── scripts/run_eval.py       # Evaluation engine (pre-checks + rate-limit retries + packaging)
-    │   ├── scripts/eval_report_v2.py # v2 report generator (six-chapter template)
+    │   ├── scripts/eval_report_v2.py # Report generator
     │   ├── 效果验收标准.xlsx  # Quality acceptance criteria (eval)
     │   └── results/           # Artifacts: eval_report_v2.html / jsonl / csv
-    ├── cache/                 # Reserved
-    └── e2e/                   # Reserved
 ```
 
 ---
@@ -105,7 +101,7 @@ thvv/eval/results/<provider>-<model>-<timestamp>/
 ├── all_eval_summary.json
 ├── eval_results.tar.gz
 └── aime26/
-    ├── eval_report_v2.html      # Six-chapter report (delivery artifact)
+    ├── eval_report_v2.html      # Evaluation report (delivery artifact)
     ├── eval_summary.json        # Score summary
     ├── per_sample_details.csv   # Per-question details
     ├── configs/task_config.yaml # Actually applied config

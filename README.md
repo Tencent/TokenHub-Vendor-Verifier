@@ -11,9 +11,7 @@
 | 模块 | 说明 | 状态 |
 |------|------|:---:|
 | `perf` | 性能压测：1k~200k 输入长度档位 × 并发梯度全组合，含增速限流（429）应对、成功率早停，产出 **HTML（37 列全指标 + 失败请求明细）+ xlsx 双报告** | ✅ |
-| `eval` | 效果评测：11 个主流数据集（AIME25/26、GPQA-Diamond、HLE、tau2-bench、MMLU-Pro、SimpleQA、LongBench v2、LiveCodeBench、SWE-Bench…），自动产出 **v2 六章效果评测报告** | ✅ |
-| `cache` | 上下文缓存基准 | 预留 |
-| `e2e` | 端到端协议验收 | 预留 |
+| `eval` | 效果评测：11 个主流数据集（AIME25/26、GPQA-Diamond、HLE、tau2-bench、MMLU-Pro、SimpleQA、LongBench v2、LiveCodeBench、SWE-Bench…），自动产出**效果评测报告** | ✅ |
 
 ---
 
@@ -33,11 +31,9 @@
     │   └── results/           # 产物：性能测试报告.html + 性能测试报告.xlsx
     ├── eval/                  # 效果评测（run.sh + scripts/ + datasets/）
     │   ├── scripts/run_eval.py       # 评测引擎（预检查 + 限流重试 + 打包）
-    │   ├── scripts/eval_report_v2.py # v2 报告生成器（六章模版）
+    │   ├── scripts/eval_report_v2.py # 报告生成器
     │   ├── 效果验收标准.xlsx  # 效果验收标准（eval）
     │   └── results/           # 产物：eval_report_v2.html / jsonl / csv
-    ├── cache/                 # 预留
-    └── e2e/                   # 预留
 ```
 
 ---
@@ -89,7 +85,7 @@ bash quickstart.sh eval bench all            # 全部
 
 ### 效果评测：`eval_report_v2.html`（每数据集一份，对外交付物）
 
-六章模版结构，数据全部来自 evalscope 落盘产物（reviews / reports/*.json / task_config.yaml / 日志）：
+报告结构如下，数据全部来自 evalscope 落盘产物（reviews / reports/*.json / task_config.yaml / 日志）：
 
 1. **核心结论** — 正确率 / 题目数 / 异常跳过 KPI
 2. **效果与稳定性** — 多轮（repeats）得分对比
@@ -105,7 +101,7 @@ thvv/eval/results/<provider>-<model>-<timestamp>/
 ├── all_eval_summary.json
 ├── eval_results.tar.gz
 └── aime26/
-    ├── eval_report_v2.html      # 六章报告（交付物）
+    ├── eval_report_v2.html      # 效果评测报告（交付物）
     ├── eval_summary.json        # 分数摘要
     ├── per_sample_details.csv   # 逐题明细
     ├── configs/task_config.yaml # 实际生效配置
