@@ -20,11 +20,10 @@ An all-in-one verification toolkit for running **performance load tests** and **
 ## Directory Structure
 
 ```
-├── quickstart.sh              # One-shot entrypoint (check / install / perf / eval)
 ├── .gitignore                 # Artifacts and dataset caches are not committed
-└── thvv/
+└── thvv/                      # All entrypoints live under thvv/ (cd thvv first)
+    ├── quickstart.sh          # One-shot entrypoint (check / install / perf / eval)
     ├── cli.py                 # Unified CLI (thvv perf ... / thvv eval ...)
-    ├── quickstart.sh          # Sub-command dispatcher
     ├── configs/
     │   ├── env.example        # Config template (copy to .env to use)
     │   ├── env.demo           # .env demo (OpenAI + Anthropic protocols)

@@ -20,11 +20,10 @@
 ## 目录结构
 
 ```
-├── quickstart.sh              # 一键入口（check / install / perf / eval）
 ├── .gitignore                 # 产物、数据集缓存不入库
-└── thvv/
+└── thvv/                      # 所有入口均在 thvv/ 下（先 cd thvv 再操作）
+    ├── quickstart.sh          # 一键入口（check / install / perf / eval）
     ├── cli.py                 # 统一 CLI（thvv perf ... / thvv eval ...）
-    ├── quickstart.sh          # 子命令分发
     ├── configs/
     │   ├── env.example        # 配置模板（复制为 .env 使用）
     │   ├── env.demo           # .env 演示样例（OpenAI + Anthropic 双协议）
