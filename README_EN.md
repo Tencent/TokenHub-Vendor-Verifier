@@ -22,8 +22,6 @@ An all-in-one verification toolkit for running **performance load tests** and **
 ```
 ├── quickstart.sh              # One-shot entrypoint (check / install / perf / eval)
 ├── .gitignore                 # Artifacts and dataset caches are not committed
-├── 性能验收标准.xlsx          # Performance acceptance criteria (perf)
-├── 效果验收标准.xlsx          # Quality acceptance criteria (eval)
 └── thvv/
     ├── cli.py                 # Unified CLI (thvv perf ... / thvv eval ...)
     ├── quickstart.sh          # Sub-command dispatcher
@@ -32,10 +30,12 @@ An all-in-one verification toolkit for running **performance load tests** and **
     │   ├── env.demo           # .env demo (OpenAI + Anthropic protocols)
     │   └── .env               # Actual credentials (not committed)
     ├── perf/                  # Performance load testing (run.sh + scripts/ + datasets/)
+    │   ├── 性能验收标准.xlsx  # Performance acceptance criteria (perf)
     │   └── results/           # Artifacts: perf-report.html + perf-report.xlsx
     ├── eval/                  # Quality evaluation (run.sh + scripts/ + datasets/)
     │   ├── scripts/run_eval.py       # Evaluation engine (pre-checks + rate-limit retries + packaging)
     │   ├── scripts/eval_report_v2.py # v2 report generator (six-chapter template)
+    │   ├── 效果验收标准.xlsx  # Quality acceptance criteria (eval)
     │   └── results/           # Artifacts: eval_report_v2.html / jsonl / csv
     ├── cache/                 # Reserved
     └── e2e/                   # Reserved
@@ -134,7 +134,7 @@ thvv/eval/results/<provider>-<model>-<timestamp>/
 
 ### Performance Acceptance Criteria
 
-Vendor performance acceptance criteria are defined in [`性能验收标准.xlsx`](./性能验收标准.xlsx). Key points:
+Vendor performance acceptance criteria are defined in [`性能验收标准.xlsx`](./thvv/perf/性能验收标准.xlsx). Key points:
 
 **Test Requirements**
 
@@ -160,11 +160,11 @@ Vendor performance acceptance criteria are defined in [`性能验收标准.xlsx`
 | | L2 | ≥ 10 tokens/s |
 | ≤10B models | / | ≥ 100 tokens/s |
 
-> All of the above are verified using the Tencent-provided benchmark; see `性能验收标准.xlsx` for details.
+> All of the above are verified using the Tencent-provided benchmark; see `thvv/perf/性能验收标准.xlsx` for details.
 
 ### Quality Acceptance Criteria
 
-Quality acceptance baselines are defined in [`效果验收标准.xlsx`](./效果验收标准.xlsx), with per-model accuracy allowed to float within **±2-4%**:
+Quality acceptance baselines are defined in [`效果验收标准.xlsx`](./thvv/eval/效果验收标准.xlsx), with per-model accuracy allowed to float within **±2-4%**:
 
 | Dataset | kimi-k3 | HY3 | deepseek-v4-flash-0731 | hy4-preview |
 |------|:---:|:---:|:---:|:---:|
@@ -181,7 +181,7 @@ Quality acceptance baselines are defined in [`效果验收标准.xlsx`](./效果
 | LIVE-CODE-BENCH | 93.18 | - | - | 86.92 |
 | SWE-bench_Verified_Mini_Agentic | - | - | - | 85.42 |
 
-> "-" means the model did not provide a result for that dataset; see `效果验收标准.xlsx` for details.
+> "-" means the model did not provide a result for that dataset; see `thvv/eval/效果验收标准.xlsx` for details.
 
 ---
 

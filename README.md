@@ -22,8 +22,6 @@
 ```
 ├── quickstart.sh              # 一键入口（check / install / perf / eval）
 ├── .gitignore                 # 产物、数据集缓存不入库
-├── 性能验收标准.xlsx          # 性能验收标准（perf）
-├── 效果验收标准.xlsx          # 效果验收标准（eval）
 └── thvv/
     ├── cli.py                 # 统一 CLI（thvv perf ... / thvv eval ...）
     ├── quickstart.sh          # 子命令分发
@@ -32,10 +30,12 @@
     │   ├── env.demo           # .env 演示样例（OpenAI + Anthropic 双协议）
     │   └── .env               # 实际凭据（不入库）
     ├── perf/                  # 性能压测（run.sh + scripts/ + datasets/）
+    │   ├── 性能验收标准.xlsx  # 性能验收标准（perf）
     │   └── results/           # 产物：性能测试报告.html + 性能测试报告.xlsx
     ├── eval/                  # 效果评测（run.sh + scripts/ + datasets/）
     │   ├── scripts/run_eval.py       # 评测引擎（预检查 + 限流重试 + 打包）
     │   ├── scripts/eval_report_v2.py # v2 报告生成器（六章模版）
+    │   ├── 效果验收标准.xlsx  # 效果验收标准（eval）
     │   └── results/           # 产物：eval_report_v2.html / jsonl / csv
     ├── cache/                 # 预留
     └── e2e/                   # 预留
@@ -134,7 +134,7 @@ thvv/eval/results/<provider>-<model>-<timestamp>/
 
 ### 性能验收标准
 
-供应商性能验收判定标准见 [`性能验收标准.xlsx`](./性能验收标准.xlsx)，要点如下：
+供应商性能验收判定标准见 [`性能验收标准.xlsx`](./thvv/perf/性能验收标准.xlsx)，要点如下：
 
 **测试要求**
 
@@ -160,11 +160,11 @@ thvv/eval/results/<provider>-<model>-<timestamp>/
 | | L2 | ≥ 10 tokens/s |
 | ≤10B 的模型 | / | ≥ 100 tokens/s |
 
-> 以上均使用腾讯提供的 benchmark 验证，详细数据见 `性能验收标准.xlsx`。
+> 以上均使用腾讯提供的 benchmark 验证，详细数据见 `thvv/perf/性能验收标准.xlsx`。
 
 ### 效果验收标准
 
-效果验收基线见 [`效果验收标准.xlsx`](./效果验收标准.xlsx)，各模型精度可在 **±2-4%** 上下浮动：
+效果验收基线见 [`效果验收标准.xlsx`](./thvv/eval/效果验收标准.xlsx)，各模型精度可在 **±2-4%** 上下浮动：
 
 | 数据集 | kimi-k3 | HY3 | deepseek-v4-flash-0731 | hy4-preview |
 |------|:---:|:---:|:---:|:---:|
@@ -181,7 +181,7 @@ thvv/eval/results/<provider>-<model>-<timestamp>/
 | LIVE-CODE-BENCH | 93.18 | - | - | 86.92 |
 | SWE-bench_Verified_Mini_Agentic | - | - | - | 85.42 |
 
-> "-" 表示该模型未提供该数据集结果；详细数据见 `效果验收标准.xlsx`。
+> "-" 表示该模型未提供该数据集结果；详细数据见 `thvv/eval/效果验收标准.xlsx`。
 
 ---
 
