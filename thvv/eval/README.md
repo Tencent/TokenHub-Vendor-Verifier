@@ -80,12 +80,28 @@ bash quickstart.sh eval bench aime25 --repeats 8 --eval_batch_size 20
 
 ### 5. HLE / SimpleQA（需要 Judge 模型）
 
+`hle` 与 `simple_qa` 使用 LLM-as-Judge 打分，**必须配置 Judge 模型**，否则预检查直接报错退出（`--datasets all` 因包含这两个数据集，同样强制要求）：
+
 ```bash
 bash quickstart.sh eval bench hle \
     --judge_model deepseek-v3-0324 \
     --judge_base_url https://api.example.com/v1 \
     --judge_api_key sk-xxx
 ```
+
+也可写入 `configs/.env`，免每次传参（对应环境变量 `JUDGE_MODEL` / `JUDGE_BASE_URL` / `JUDGE_API_KEY`，优先级：CLI 参数 > 环境变量 > `.env`）：
+
+```bash
+JUDGE_MODEL=deepseek-v3-0324
+JUDGE_BASE_URL=https://api.example.com/v1
+JUDGE_API_KEY=sk-xxx
+```
+
+说明：
+
+- `judge_base_url` 是 Judge 模型的 **OpenAI 兼容 base URL**（不含 `/chat/completions`），与被测模型的 `API_URL` 相互独立——即 Judge 可用其他供应商的模型
+- 可选 `--judge_strategy`（`rule` / `llm` / `llm_recall` / `auto`），hle 与 simple_qa 默认已是 `llm`，一般无需指定
+- 缺省时报错示例：`--judge_model（LLM Judge 需要）不能为空`
 
 ---
 
