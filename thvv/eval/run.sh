@@ -35,17 +35,26 @@ MODEL_NAME="${MODEL_NAME:-}"
 PROVIDER="${PROVIDER:-unknown}"
 
 # ---- 检测并安装缺失依赖 ----
+do_pip_install() {
+    python3 -m pip install -r requirements.txt -q --root-user-action=ignore --no-cache-dir || {
+        python3 -m pip install -r requirements.txt -q --force-reinstall --root-user-action=ignore --no-cache-dir || {
+            echo "[fail] 依赖安装失败，请手动执行: pip install -r requirements.txt"
+            return 1
+        }
+    }
+}
+
 ensure_eval_deps() {
     local lock_file="/tmp/ai_evaluagtion_eval_pip_install.lock"
     echo "[deps] 按 requirements.txt 固定版本安装效果评测依赖..."
     (
-        flock -w 600 9 || { echo "[fail] 等待 pip 安装锁超时"; exit 1; }
-        python3 -m pip install -r requirements.txt -q --root-user-action=ignore --no-cache-dir || {
-            python3 -m pip install -r requirements.txt -q --force-reinstall --root-user-action=ignore --no-cache-dir || {
-                echo "[fail] 依赖安装失败，请手动执行: pip install -r requirements.txt"
-                exit 1
-            }
-        }
+        # flock 仅 Linux 自带；macOS 无此命令时跳过加锁直接安装
+        if command -v flock >/dev/null 2>&1; then
+            flock -w 600 9 || { echo "[fail] 等待 pip 安装锁超时"; exit 1; }
+        else
+            echo "[deps] flock 不可用（macOS?），跳过安装锁，请勿并发执行安装"
+        fi
+        do_pip_install
     ) 9>"$lock_file"
     echo "[deps] 依赖安装完成"
 }
