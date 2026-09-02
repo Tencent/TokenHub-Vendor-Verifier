@@ -6,7 +6,6 @@ __pycache__/
 thvv/eval/results/
 thvv/eval/datasets/
 thvv/perf/results/
-# 压测数据集共 2.7GB（perf_zh_128k.jsonl 约 1GB，超 GitHub 单文件 100MB 限制）
-thvv/perf/datasets/
+# 压测数据集共 2.7GB：不走普通 Git 对象，改由 Git LFS 管理（见 .gitattributes 的 *.jsonl track 规则）
 # 运行日志（临时产物）
 *.log
