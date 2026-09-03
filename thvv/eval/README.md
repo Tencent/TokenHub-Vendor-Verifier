@@ -78,9 +78,25 @@ bash quickstart.sh eval bench all
 bash quickstart.sh eval bench aime25 --repeats 8 --eval_batch_size 20
 ```
 
+### 4.1 常用可选参数
+
+以下参数由 `eval bench` 原样透传给评测引擎：
+
+| 参数 | 说明 |
+|------|------|
+| `--limit N` | 每个数据集最多跑 N 条（冒烟验证） |
+| `--repeats K` | 重复次数 / pass@k（默认按数据集，如 aime=16、gpqa=3、tau2=5） |
+| `--eval_batch_size N` | 并发数（默认按数据集） |
+| `--temperature` / `--top_p` / `--max_tokens` | 生成参数（缺省用服务端默认或引擎按模型推断） |
+| `--thinking true/false` | 思考模式开关（默认开启） |
+| `--thinking-type <t>` | thinking.type 取值（默认按供应商映射：minimax→adaptive，其余→enabled） |
+| `--provider_override NAME` | 注入 `X-Provider-Override` 路由请求头 |
+| `--subset_list airline,retail,telecom` | tau2_bench 领域子集 |
+| `--mmlu_pro_subset` / `--longbench_v2_subset` / `--live_code_bench_subset` | 对应数据集子集 |
+
 ### 5. HLE / SimpleQA（需要 Judge 模型）
 
-`hle` 与 `simple_qa` 使用 LLM-as-Judge 打分，**必须配置 Judge 模型**，否则预检查直接报错退出（`--datasets all` 因包含这两个数据集，同样强制要求）：
+`hle` 与 `simple_qa` 使用 LLM-as-Judge 打分，**必须提供 Judge 配置**，否则预检查直接报错退出（`--datasets all` 因包含这两个数据集，同样强制要求）。judge 模型与地址有默认值（`deepseek-v4-pro` @ `https://api.deepseek.com/v1`），通常只需提供 `--judge_api_key`（或环境变量 `JUDGE_API_KEY`）：
 
 ```bash
 bash quickstart.sh eval bench hle \
@@ -175,7 +191,7 @@ results/zhipu-glm-5.2-20260702_180000/
 ```bash
 bash quickstart.sh install
 # 或
-pip install evalscope==1.8.0
+pip install evalscope==1.9.0   # requirements.txt 已固定 1.9.0，勿随意升级
 ```
 
 **Q: tau2_bench 报 ImportError？**

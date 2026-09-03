@@ -3,7 +3,7 @@
 本工具包用于对大模型推理 API 进行标准的性能基准测试（吞吐、延迟、并发能力），基于
 [EvalScope](https://github.com/modelscope/evalscope) 性能测试引擎。
 
-**适用任意兼容 OpenAI Chat Completions 或 Anthropic Messages 协议的模型**。工具本身不绑定任何特定模型族或 API 端点——只需在 `configs/.env` 中填写你的地址、密钥和模型名即可。
+**适用任意兼容 OpenAI Chat Completions 或 Anthropic Messages 协议的模型**。工具本身不绑定任何特定模型族或 API 端点——只需在项目级 `thvv/configs/.env` 中填写你的地址、密钥和模型名即可。
 
 > 配置文件中的 GLM-5.2 和 GLM-4.6 tokenizer **仅为示例**，使用前请替换为你的实际模型和对应的 tokenizer。
 
@@ -12,13 +12,9 @@
 ## 目录结构
 
 ```
-├── run.sh                        # 一键入口（检查 / 压测 / 报告）
-├── requirements.txt              # Python 依赖
-├── .gitignore
-├── configs/
-│   ├── env.example               # 配置模板，复制为 .env 后填写
-│   └── .env                      # 你的实际配置（含密钥，已被 .gitignore 忽略）
-├── datasets/                     # 内置压测数据集（10 档）
+├── run.sh                        # 一键入口（check / bench / bench-all / report）
+├── requirements.txt              # Python 依赖（evalscope[perf]>=0.13.0）
+├── datasets/                     # 内置压测数据集（10 个）
 │   ├── perf_zh_1k.jsonl          # ~1k  tokens 中文对话
 │   ├── perf_zh_9k.jsonl          # ~9k  tokens
 │   ├── perf_zh_16k.jsonl         # ~16k tokens
@@ -29,13 +25,17 @@
 │   ├── perf_zh_9k_cold.jsonl     # 前缀缓存冷启动
 │   ├── perf_zh_9k_hot.jsonl      # 前缀缓存热命中
 │   └── perf_zh_9k_mix50.jsonl    # 50% 前缀缓存混合
+├── references/                   # 性能测试报告模板.xlsx
 ├── scripts/
-│   ├── setup_tokenizer.py        # 下载/校验 tokenizer
-│   ├── gen_perf_dashboard.py     # 唯一报告出口：性能测试报告.html
-│   ├── gen_report_from_db.py     # （手动工具）38 列 Excel 指标报告
-│   └── export_failure_details.py # （手动工具）失败请求 CSV 导出
+│   ├── setup_tokenizer.py        # 下载/校验 tokenizer（bench / bench-all / check 启动前自动调用）
+│   ├── gen_perf_dashboard.py     # HTML 报告唯一出口：性能测试报告.html
+│   ├── gen_report_from_db.py     # 38 列 Excel 指标报告：性能测试报告.xlsx
+│   ├── export_failure_details.py # （手动工具）失败请求 CSV 导出
+│   └── sla_eval.py               # （手动工具）SLA 验收评估：TTFT P50/P90 分档阈值 + 吞吐下限判定
 └── results/                      # 压测产物（自动创建，已由 .gitignore 排除）
 ```
+
+> 运行配置统一放在项目级 `thvv/configs/`（模板 `thvv/configs/env.example`，复制为 `.env` 使用），不在本目录。
 
 ---
 
@@ -50,7 +50,7 @@ pip install -r requirements.txt
 ### 2. 配置
 
 ```bash
-cp configs/env.example configs/.env
+cp ../configs/env.example ../configs/.env   # 即项目级 thvv/configs/
 ```
 
 编辑 `configs/.env`，填写必填项：
@@ -78,6 +78,9 @@ TOKENIZER=你的tokenizer仓库名
 | MiniMax M2 / M2.7 | `MiniMaxAI/MiniMax-M2` |
 | Kimi K2.5 / K2.6 / K2.7 | `moonshotai/Kimi-K2-Thinking` |
 | Claude 系列（anthropic 协议） | `Xenova/gpt-4o`（近似） |
+
+> `TOKENIZER` 可留空：`MODEL_NAME` 命中常见模型族（GLM / DeepSeek / MiniMax / Kimi / Qwen / Llama / Claude / GPT 等）时自动推断，显式设置优先。
+> 采样温度无需手动设置：默认按模型自适应（kimi/moonshot 系列 = 1.0，其余 = 0.0），可用环境变量 `TEMPERATURE` 显式覆盖（优先级最高）。
 
 ### 3. 环境检查
 
@@ -115,13 +118,20 @@ bash run.sh bench 128k 500 128
 > 启动后进程在后台运行，会打印 PID 和日志路径。
 > 使用 `tail -f results/perf-*-*/run.log` 跟踪进度。
 
-### 6. 生成报告
+### 6. 报告
+
+`bench` / `bench-all` 跑完会**自动生成**两份报告（HTML 阅读版 + xlsx 指标版），无需手动操作；路径见下方常见问题。
+
+中途中断 / 异常失败后手动补报告：
 
 ```bash
-bash run.sh report --client "供应商名称"
-```
+# HTML 报告（参数透传 gen_perf_dashboard.py）
+bash run.sh report --run-dir results/perf-<bucket>-<ts> --model "模型名"
 
-输出 Excel 报告到 `results/性能测试报告_<client>_<timestamp>.xlsx`。
+# Excel 指标报告（--client 用于报告署名，也可用环境变量 CLIENT）
+python3 scripts/gen_report_from_db.py --results-dir results --client "供应商名称" \
+    --out results/性能测试报告.xlsx
+```
 
 ---
 
@@ -196,7 +206,7 @@ export HF_ENDPOINT=https://huggingface.co
 **Q: 提示 `configs/.env 不存在`？**
 
 ```bash
-cp configs/env.example configs/.env
+cp ../configs/env.example ../configs/.env
 ```
 
 **Q: 压测成功后会自动出报告吗？中途中断呢？**

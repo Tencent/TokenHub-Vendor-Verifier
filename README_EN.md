@@ -1,6 +1,6 @@
 # THVV — TokenHub Vendor Verifier
 
-An all-in-one verification toolkit for running **performance load tests** and **quality evaluations** against large-model vendors. Compatible with any OpenAI / Anthropic protocol endpoint, it produces reports and structured artifacts automatically once a run completes.
+An all-in-one verification toolkit for running **performance load tests** and **quality evaluations** against large-model vendors. Performance load testing supports OpenAI / Anthropic dual-protocol endpoints, while quality evaluation works with any OpenAI-compatible endpoint. Reports and structured artifacts are produced automatically once a run completes.
 
 > Naming: THVV = TokenHub Vendor Verifier, used for capability verification and artifact archival before a vendor is onboarded.
 
@@ -10,7 +10,7 @@ An all-in-one verification toolkit for running **performance load tests** and **
 
 | Module | Description | Status |
 |------|------|:---:|
-| `perf` | Performance load testing: full combination of input-length buckets (1k–200k) × concurrency ladders, with rate-limit (429) ramp-up handling, success-rate early stopping, and dual reports — **HTML (37-column full metrics + failed-request details) + xlsx** | ✅ |
+| `perf` | Performance load testing: full combination of input-length buckets (1k–200k) × concurrency ladders, with success-rate early stopping and adaptive temperature / tokenizer, producing dual reports — **HTML (37-column full metrics + failed-request details) + xlsx** | ✅ |
 | `eval` | Quality evaluation: 11 mainstream datasets (AIME25/26, GPQA-Diamond, HLE, tau2-bench, MMLU-Pro, SimpleQA, LongBench v2, LiveCodeBench, SWE-Bench…), automatically producing the **evaluation report** | ✅ |
 
 ---
@@ -18,22 +18,32 @@ An all-in-one verification toolkit for running **performance load tests** and **
 ## Directory Structure
 
 ```
-├── .gitignore                 # Artifacts and dataset caches are not committed
+├── README.md / README_EN.md   # This guide (Chinese / English)
+├── .gitignore                 # Artifacts, dataset caches and secrets are not committed (datasets via Git LFS)
 └── thvv/                      # All entrypoints live under thvv/ (cd thvv first)
     ├── quickstart.sh          # One-shot entrypoint (check / install / perf / eval)
-    ├── cli.py                 # Unified CLI (thvv perf ... / thvv eval ...)
+    ├── cli.py                 # Unified CLI: python3 thvv/cli.py perf|eval|check|install ...
     ├── configs/
     │   ├── env.example        # Config template (copy to .env to use)
     │   ├── env.demo           # .env demo (OpenAI + Anthropic protocols)
+    │   ├── README.md          # Configuration reference
     │   └── .env               # Actual credentials (not committed)
-    ├── perf/                  # Performance load testing (run.sh + scripts/ + datasets/)
+    ├── perf/                  # Performance load testing
+    │   ├── run.sh             # Subcommands: check / bench / bench-all / report
+    │   ├── requirements.txt   # perf dependencies (evalscope[perf]>=0.13.0)
+    │   ├── scripts/           # gen_perf_dashboard.py (single HTML exit) / gen_report_from_db.py (xlsx) /
+    │   │                      # export_failure_details.py (failure CSV) / setup_tokenizer.py / sla_eval.py (SLA verdicts)
+    │   ├── datasets/          # 10 datasets (1k~200k, 7 main buckets + 3 prefix-cache scenarios)
+    │   ├── references/        # 性能测试报告模板.xlsx (report template)
     │   ├── 性能验收标准.xlsx  # Performance acceptance criteria (perf)
-    │   └── results/           # Artifacts: perf-report.html + perf-report.xlsx
-    ├── eval/                  # Quality evaluation (run.sh + scripts/ + datasets/)
-    │   ├── scripts/run_eval.py       # Evaluation engine (pre-checks + rate-limit retries + packaging)
-    │   ├── scripts/eval_report_v2.py # Report generator
-    │   ├── 效果验收标准.xlsx  # Quality acceptance criteria (eval)
-    │   └── results/           # Artifacts: eval_report_v2.html / jsonl / csv
+    │   └── results/           # Artifacts: 性能测试报告.html + 性能测试报告.xlsx
+    └── eval/                  # Quality evaluation
+        ├── run.sh             # Subcommands: check / bench / list
+        ├── requirements.txt   # eval dependencies (evalscope pinned to 1.9.0)
+        ├── scripts/run_eval.py       # Evaluation engine (pre-checks + rate-limit retries + packaging)
+        ├── scripts/eval_report_v2.py # Report generator
+        ├── 效果验收标准.xlsx  # Quality acceptance criteria (eval)
+        └── results/           # Artifacts: eval_report_v2.html / eval_summary.json / per_sample_details.csv
 ```
 
 ---
@@ -48,8 +58,10 @@ cp configs/env.example configs/.env   # Fill in API_URL / API_KEY / MODEL_NAME /
 ```
 
 - `API_URL` must be the **full request path** (OpenAI: `.../v1/chat/completions`; Anthropic: `.../v1/messages`)
-- `PROTOCOL` = `openai` | `anthropic` (both perf and eval support both protocols)
+- `PROTOCOL` = `openai` | `anthropic` (perf supports both; eval speaks the OpenAI-compatible interface and usually needs no change)
 - Config priority: CLI args > environment variables > `configs/.env`
+
+> Besides quickstart.sh, a unified CLI is available: `python3 thvv/cli.py perf bench 1k 20 1` (equivalent passthrough, auto-loads `configs/.env` on startup)
 
 ### 2. Environment Check / Install Dependencies
 
@@ -66,7 +78,7 @@ bash quickstart.sh perf bench-all            # All buckets × concurrency ladder
 bash quickstart.sh perf report               # Regenerate report from results/
 ```
 
-Common environment variables: `BUCKETS`, `CONCURRENCY_LADDER`, `BUCKET_COOLDOWN`, `N_<label>` (requests per bucket), `SUCCESS_RATE_MIN` (success-rate early stop), `RATE_LIMIT_RAMP` / `RAMP_RATE` / `WARMUP_NUM` (rate-limit ramp-up handling). See `thvv/perf/README.md` for details.
+Common environment variables: `BUCKETS`, `CONCURRENCY_LADDER`, `BUCKET_COOLDOWN`, `N_<label>` (requests per bucket), `SUCCESS_RATE_MIN` (success-rate early stop), `TEMPERATURE` (adaptive by model name by default: kimi/moonshot=1.0, others=0.0), `CLIENT` (client name stamped into the xlsx report). When `MODEL_NAME` matches a known model family the tokenizer is auto-detected; an explicit `TOKENIZER` takes precedence. See `thvv/perf/README.md` for details.
 
 ### 4. Quality Evaluation
 
@@ -77,7 +89,7 @@ bash quickstart.sh eval bench aime26 --limit 30 --repeats 1 --eval_batch_size 10
 bash quickstart.sh eval bench all            # All datasets
 ```
 
-For datasets requiring an LLM Judge (`hle` / `simple_qa`), append `--judge_model / --judge_base_url / --judge_api_key`. Rate limits automatically wait 60s and resume with `--use-cache`. See `thvv/eval/README.md` for details.
+For datasets requiring an LLM Judge (`hle` / `simple_qa`; `all` enforces this too), provide `--judge_api_key`. The judge model and base URL have defaults (`deepseek-v4-pro` @ `https://api.deepseek.com/v1`) and can be overridden via `--judge_model / --judge_base_url`. Rate limits automatically wait 60s and resume with `--use-cache`. See `thvv/eval/README.md` for details.
 
 ---
 
@@ -98,19 +110,21 @@ Typical results directory:
 
 ```
 thvv/eval/results/<provider>-<model>-<timestamp>/
-├── all_eval_summary.json
-├── eval_results.tar.gz
+├── all_eval_summary.json        # Overall summary (one per run root)
+├── eval_results.tar.gz          # Packaged archive (contains all raw artifacts)
 └── aime26/
     ├── eval_report_v2.html      # Evaluation report (delivery artifact)
     ├── eval_summary.json        # Score summary
     ├── per_sample_details.csv   # Per-question details
     ├── configs/task_config.yaml # Actually applied config
-    ├── predictions/ reviews/    # Per-question raw outputs and scores
-    ├── logs/                    # Run logs (fallback source for skipped samples)
-    └── reports/*.json           # evalscope raw score reports
+    └── logs/                    # Run logs (fallback source for skipped samples)
 ```
 
-### Performance Load Testing: `perf-report.html` (readable) + `perf-report.xlsx` (metrics)
+> The raw `predictions/`, `reviews/`, and `reports/` (native evalscope outputs, 90%+ of the volume) are
+> distilled into the per-question details and the report, then automatically removed from the loose
+> directories after packaging; failed datasets keep their raw artifacts for troubleshooting.
+
+### Performance Load Testing: `性能测试报告.html` (readable) + `性能测试报告.xlsx` (metrics)
 
 **HTML** (single self-contained file, opens offline, four chapters, metrics fully consistent with xlsx):
 
@@ -188,4 +202,4 @@ Quality acceptance baselines are defined in [`效果验收标准.xlsx`](./thvv/e
 
 ## Version Notes
 
-- evalscope is pinned to `1.9.0` (a verified combination as of 2026-07-20; do not upgrade casually)
+- eval side: evalscope is pinned to `1.9.0` (a verified combination as of 2026-07-20; do not upgrade casually); perf side: `evalscope[perf]>=0.13.0`

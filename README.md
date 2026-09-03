@@ -1,6 +1,6 @@
 # THVV — TokenHub Vendor Verifier
 
-对大模型供应商做**性能压测**与**效果评测**的一体化验证工具集。兼容任意 OpenAI / Anthropic 协议端点，跑完自动产出报告与结构化产物。
+对大模型供应商做**性能压测**与**效果评测**的一体化验证工具集。性能压测支持 OpenAI / Anthropic 双协议端点，效果评测支持任意 OpenAI 兼容端点，跑完自动产出报告与结构化产物。
 
 > 命名：THVV = TokenHub Vendor Verifier，用于供应商引入前的能力验证与产物归档。
 
@@ -10,7 +10,7 @@
 
 | 模块 | 说明 | 状态 |
 |------|------|:---:|
-| `perf` | 性能压测：1k~200k 输入长度档位 × 并发梯度全组合，含增速限流（429）应对、成功率早停，产出 **HTML（37 列全指标 + 失败请求明细）+ xlsx 双报告** | ✅ |
+| `perf` | 性能压测：1k~200k 输入长度档位 × 并发梯度全组合，含成功率早停、温度 / tokenizer 自适应，产出 **HTML（37 列全指标 + 失败请求明细）+ xlsx 双报告** | ✅ |
 | `eval` | 效果评测：11 个主流数据集（AIME25/26、GPQA-Diamond、HLE、tau2-bench、MMLU-Pro、SimpleQA、LongBench v2、LiveCodeBench、SWE-Bench…），自动产出**效果评测报告** | ✅ |
 
 ---
@@ -18,22 +18,32 @@
 ## 目录结构
 
 ```
-├── .gitignore                 # 产物、数据集缓存不入库
+├── README.md / README_EN.md   # 本说明（中文 / 英文）
+├── .gitignore                 # 产物、数据集缓存、密钥不入库（数据集走 Git LFS）
 └── thvv/                      # 所有入口均在 thvv/ 下（先 cd thvv 再操作）
     ├── quickstart.sh          # 一键入口（check / install / perf / eval）
-    ├── cli.py                 # 统一 CLI（thvv perf ... / thvv eval ...）
+    ├── cli.py                 # 统一 CLI：python3 thvv/cli.py perf|eval|check|install ...
     ├── configs/
     │   ├── env.example        # 配置模板（复制为 .env 使用）
     │   ├── env.demo           # .env 演示样例（OpenAI + Anthropic 双协议）
+    │   ├── README.md          # 配置项说明
     │   └── .env               # 实际凭据（不入库）
-    ├── perf/                  # 性能压测（run.sh + scripts/ + datasets/）
+    ├── perf/                  # 性能压测
+    │   ├── run.sh             # 子命令：check / bench / bench-all / report
+    │   ├── requirements.txt   # perf 依赖（evalscope[perf]>=0.13.0）
+    │   ├── scripts/           # gen_perf_dashboard.py（HTML 唯一出口）/ gen_report_from_db.py（xlsx）/
+    │   │                      # export_failure_details.py（失败 CSV）/ setup_tokenizer.py / sla_eval.py（SLA 判定）
+    │   ├── datasets/          # 10 个数据集（1k~200k 共 7 主档 + 3 个前缀缓存场景）
+    │   ├── references/        # 性能测试报告模板.xlsx
     │   ├── 性能验收标准.xlsx  # 性能验收标准（perf）
     │   └── results/           # 产物：性能测试报告.html + 性能测试报告.xlsx
-    ├── eval/                  # 效果评测（run.sh + scripts/ + datasets/）
-    │   ├── scripts/run_eval.py       # 评测引擎（预检查 + 限流重试 + 打包）
-    │   ├── scripts/eval_report_v2.py # 报告生成器
-    │   ├── 效果验收标准.xlsx  # 效果验收标准（eval）
-    │   └── results/           # 产物：eval_report_v2.html / jsonl / csv
+    └── eval/                  # 效果评测
+        ├── run.sh             # 子命令：check / bench / list
+        ├── requirements.txt   # eval 依赖（evalscope 固定 1.9.0）
+        ├── scripts/run_eval.py       # 评测引擎（预检查 + 限流重试 + 打包）
+        ├── scripts/eval_report_v2.py # 报告生成器
+        ├── 效果验收标准.xlsx  # 效果验收标准（eval）
+        └── results/           # 产物：eval_report_v2.html / eval_summary.json / per_sample_details.csv
 ```
 
 ---
@@ -48,8 +58,10 @@ cp configs/env.example configs/.env   # 填写 API_URL / API_KEY / MODEL_NAME / 
 ```
 
 - `API_URL` 必须是**完整请求路径**（OpenAI: `.../v1/chat/completions`；Anthropic: `.../v1/messages`）
-- `PROTOCOL` = `openai` | `anthropic`（perf 与 eval 均支持双协议）
+- `PROTOCOL` = `openai` | `anthropic`（perf 支持双协议；eval 走 OpenAI 兼容接口，一般无需设置）
 - 配置优先级：CLI 参数 > 环境变量 > `configs/.env`
+
+> 除 quickstart.sh 外，也可用统一 CLI：`python3 thvv/cli.py perf bench 1k 20 1`（等价透传，启动时自动加载 `configs/.env`）
 
 ### 2. 环境检查 / 安装依赖
 
@@ -66,7 +78,7 @@ bash quickstart.sh perf bench-all            # 全档位 × 并发梯度（可�
 bash quickstart.sh perf report               # 从 results/ 重新生成报告
 ```
 
-常用环境变量：`BUCKETS`、`CONCURRENCY_LADDER`、`BUCKET_COOLDOWN`、`N_<label>`（单档请求数）、`SUCCESS_RATE_MIN`（成功率早停）、`RATE_LIMIT_RAMP` / `RAMP_RATE` / `WARMUP_NUM`（增速限流应对）。详见 `thvv/perf/README.md`。
+常用环境变量：`BUCKETS`、`CONCURRENCY_LADDER`、`BUCKET_COOLDOWN`、`N_<label>`（单档请求数）、`SUCCESS_RATE_MIN`（成功率早停）、`TEMPERATURE`（默认按模型名自适应：kimi/moonshot=1.0，其余=0.0）、`CLIENT`（xlsx 报告署名）。`MODEL_NAME` 命中常见模型族时 tokenizer 自动识别，`TOKENIZER` 显式设置优先。详见 `thvv/perf/README.md`。
 
 ### 4. 效果评测
 
@@ -77,7 +89,7 @@ bash quickstart.sh eval bench aime26 --limit 30 --repeats 1 --eval_batch_size 10
 bash quickstart.sh eval bench all            # 全部
 ```
 
-需 LLM Judge 的数据集（hle / simple_qa）追加 `--judge_model / --judge_base_url / --judge_api_key`。限流自动等待 60s 并注入 `--use-cache` 续跑。详见 `thvv/eval/README.md`。
+需 LLM Judge 的数据集（hle / simple_qa，`all` 同样强制）需提供 `--judge_api_key`；judge 模型与地址有默认值（`deepseek-v4-pro` @ `https://api.deepseek.com/v1`），可用 `--judge_model / --judge_base_url` 覆盖。限流自动等待 60s 并注入 `--use-cache` 续跑。详见 `thvv/eval/README.md`。
 
 ---
 
@@ -98,17 +110,18 @@ bash quickstart.sh eval bench all            # 全部
 
 ```
 thvv/eval/results/<provider>-<model>-<timestamp>/
-├── all_eval_summary.json
-├── eval_results.tar.gz
+├── all_eval_summary.json        # 总汇总（仅 run 根一份）
+├── eval_results.tar.gz          # 打包归档（含全部原始产物）
 └── aime26/
     ├── eval_report_v2.html      # 效果评测报告（交付物）
     ├── eval_summary.json        # 分数摘要
     ├── per_sample_details.csv   # 逐题明细
     ├── configs/task_config.yaml # 实际生效配置
-    ├── predictions/ reviews/    # 逐题原始输出与评分
-    ├── logs/                    # 运行日志（跳过样本兜底来源）
-    └── reports/*.json           # evalscope 原始得分报告
+    └── logs/                    # 运行日志（跳过样本兜底来源）
 ```
+
+> 原始 `predictions/`、`reviews/`、`reports/`（evalscope 原生产物，占体积 90%+）的信息已提炼进
+> 逐题明细与报告，打包归档后自动从散目录清理；失败的数据集保留原始产物便于排障。
 
 ### 性能压测：`性能测试报告.html`（阅读版）+ `性能测试报告.xlsx`（指标版）
 
@@ -188,4 +201,4 @@ thvv/eval/results/<provider>-<model>-<timestamp>/
 
 ## 版本说明
 
-- evalscope 固定 `1.9.0`（2026-07-20 已验证组合，勿随意升级）
+- eval 侧 evalscope 固定 `1.9.0`（2026-07-20 已验证组合，勿随意升级）；perf 侧 `evalscope[perf]>=0.13.0`
