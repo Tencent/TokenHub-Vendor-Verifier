@@ -1,6 +1,6 @@
 # THVV — TokenHub Vendor Verifier
 
-对大模型供应商做**性能压测**与**效果评测**的一体化验证工具集。性能压测支持 OpenAI / Anthropic 双协议端点，效果评测支持任意 OpenAI 兼容端点，跑完自动产出报告与结构化产物。
+对大模型供应商做**性能压测**、**效果评测**与**API 兼容性对比**的一体化验证工具集。性能压测支持 OpenAI / Anthropic 双协议端点，效果评测支持任意 OpenAI 兼容端点，兼容性对比支持同一请求在供应商端点与原厂端点之间实时双发比对，跑完自动产出报告与结构化产物。
 
 > 命名：THVV = TokenHub Vendor Verifier，用于供应商引入前的能力验证与产物归档。
 
@@ -12,6 +12,7 @@
 |------|------|:---:|
 | `perf` | 性能压测：1k~200k 输入长度档位 × 并发梯度全组合，含成功率早停、温度 / tokenizer 自适应，产出 **HTML（37 列全指标 + 失败请求明细）+ xlsx 双报告** | ✅ |
 | `eval` | 效果评测：11 个主流数据集（AIME25/26、GPQA-Diamond、HLE、tau2-bench、MMLU-Pro、SimpleQA、LongBench v2、LiveCodeBench、SWE-Bench…），自动产出**效果评测报告** | ✅ |
+| `e2e` | API 兼容性实时对比：必须同时提供**供应商侧 + 原厂侧**端点/密钥/模型名，同一请求实时双发、按规则筛差异（R1-R6 + 31 检查点），每个 case 跑完**当场出差异**，支持**实时看板**，产出**兼容性对比报告** | ✅ |
 
 ---
 
@@ -21,8 +22,8 @@
 ├── README.md / README_EN.md   # 本说明（中文 / 英文）
 ├── .gitignore                 # 产物、数据集缓存、密钥不入库（数据集走 Git LFS）
 └── thvv/                      # 所有入口均在 thvv/ 下（先 cd thvv 再操作）
-    ├── quickstart.sh          # 一键入口（check / install / perf / eval）
-    ├── cli.py                 # 统一 CLI：python3 thvv/cli.py perf|eval|check|install ...
+    ├── quickstart.sh          # 一键入口（check / install / perf / eval / e2e）
+    ├── cli.py                 # 统一 CLI：python3 thvv/cli.py perf|eval|e2e|check|install ...
     ├── configs/
     │   ├── env.example        # 配置模板（复制为 .env 使用）
     │   ├── env.demo           # .env 演示样例（OpenAI + Anthropic 双协议）
@@ -37,13 +38,22 @@
     │   ├── references/        # 性能测试报告模板.xlsx
     │   ├── 性能验收标准.xlsx  # 性能验收标准（perf）
     │   └── results/           # 产物：性能测试报告.html + 性能测试报告.xlsx
-    └── eval/                  # 效果评测
-        ├── run.sh             # 子命令：check / bench / list
-        ├── requirements.txt   # eval 依赖（evalscope 固定 1.9.0）
-        ├── scripts/run_eval.py       # 评测引擎（预检查 + 限流重试 + 打包）
-        ├── scripts/eval_report_v2.py # 报告生成器
-        ├── 效果验收标准.xlsx  # 效果验收标准（eval）
-        └── results/           # 产物：eval_report_v2.html / eval_summary.json / per_sample_details.csv
+    ├── eval/                  # 效果评测
+    │   ├── run.sh             # 子命令：check / bench / list
+    │   ├── requirements.txt   # eval 依赖（evalscope 固定 1.9.0）
+    │   ├── scripts/run_eval.py       # 评测引擎（预检查 + 限流重试 + 打包）
+    │   ├── scripts/eval_report_v2.py # 报告生成器
+    │   ├── 效果验收标准.xlsx  # 效果验收标准（eval）
+    │   └── results/           # 产物：eval_report_v2.html / eval_summary.json / per_sample_details.csv
+    └── e2e/                   # API 兼容性实时对比
+        ├── run.sh             # 子命令：check / list / bench / report
+        ├── requirements.txt   # e2e 依赖（httpx + pyyaml）
+        ├── rules.json         # 对比规则配置（R1-R6 + 32 检查点 + 豁免）
+        ├── 对比规则.md         # 判定口径说明
+        ├── scripts/           # run_e2e.py（引擎）/ cases.py（加载+强校验）/ compare.py（判定）/
+        │                      # reporter.py（终端实时+增量落盘）/ live_server.py + live_page.html（实时看板）/ gen_report.py
+        ├── cases/             # 用例（params / capabilities / behaviors / combinations）
+        └── results/           # 产物：兼容性对比报告.html / diffs.json / per_case.csv
 ```
 
 ---
@@ -90,6 +100,20 @@ bash quickstart.sh eval bench all            # 全部
 ```
 
 需 LLM Judge 的数据集（hle / simple_qa，`all` 同样强制）需提供 `--judge_api_key`；judge 模型与地址有默认值（`deepseek-v4-pro` @ `https://api.deepseek.com/v1`），可用 `--judge_model / --judge_base_url` 覆盖。限流自动等待 60s 并注入 `--use-cache` 续跑。详见 `thvv/eval/README.md`。
+
+### 5. API 兼容性实时对比
+
+```bash
+# 需在 configs/.env 中同时配置「供应商侧」与「原厂侧」共 6 项（见 thvv/e2e/README.md）
+bash quickstart.sh e2e check                 # 环境检查（含两侧配置配对校验）
+bash quickstart.sh e2e list                  # 列出用例组与规模
+bash quickstart.sh e2e bench                 # 跑 P0 核心集（约 10 分钟）
+bash quickstart.sh e2e bench --live          # 开启实时看板（浏览器）
+bash quickstart.sh e2e bench --all           # 全量（约 1 小时）
+bash quickstart.sh e2e report results/<dir>  # 重新生成报告
+```
+
+每个 case 跑完**当场输出差异**（终端一行含双侧值对照），`diffs.json` 增量落盘、中断不丢；跑完产出单文件 HTML 报告。详见 `thvv/e2e/README.md`。
 
 ---
 
@@ -174,22 +198,25 @@ thvv/eval/results/<provider>-<model>-<timestamp>/
 
 效果验收基线见 [`效果验收标准.xlsx`](./thvv/eval/效果验收标准.xlsx)，各模型精度可在 **±2-4%** 上下浮动：
 
-| 数据集 | kimi-k3 | HY3 | deepseek-v4-flash-0731 | hy4-preview |
-|------|:---:|:---:|:---:|:---:|
-| AIME2026 | 95 | 96.63 | 95.67 | 96 |
-| HLE | 44 | 29.74 | 32.35 | 34.33 |
-| MMLU_Pro | 89.52 | 87.36 | 87.25 | 85.96 |
-| Simple_QA | 46.1 | 34.41 | 37.56 | 33.7 |
-| GPQA-Diamond | 92.76 | 90.66 | 89.73 | 94.44 |
-| LongBench V2 (Short) | 72.22 | 65.54 | 68.89 | 67.56 |
-| τ²-Bench · 智慧零售 retail | 82.22 | 75.18 | 87.7 | 82.22 |
-| τ²-Bench · 电力技术支持 telecom | 71.53 | 76.49 | 98.42 | 77.14 |
-| τ²-Bench · 航空客服 airline | 66.52 | 63.45 | 68.05 | 74.7 |
-| τ²-Bench · OVERALL | 75.02 | 73.61 | 88.7 | 77.27 |
-| LIVE-CODE-BENCH | 93.18 | - | - | 86.92 |
-| SWE-bench_Verified_Mini_Agentic | - | - | - | 85.42 |
+| 数据集 | kimi-k3 | HY3 | deepseek-v4-flash-0731 | hy4-preview | glm-5.3-flash | deepseek-v4.1-flash |
+|------|:---:|:---:|:---:|:---:|:---:|:---:|
+| AIME2026 | 95 | 96.63 | 95.67 | 96 | 93.75 | 97.92 |
+| HLE | 44 | 29.74 | 32.35 | 34.33 | 29.24 | 33.37 |
+| MMLU_Pro | 89.52 | 87.36 | 87.25 | 85.96 | 87.58 | 87.86 |
+| Simple_QA | 46.1 | 34.41 | 37.56 | 33.7 | 34.56 | 41.33 |
+| GPQA-Diamond | 92.76 | 90.66 | 89.73 | 94.44 | 90.4 | 90.91 |
+| LongBench V2 (Short) | 72.22 | 65.54 | 68.89 | 67.56 | 67.6 | 64.44 |
+| τ²-Bench · 智慧零售 retail | 82.22 | 75.18 | 87.7 | 82.22 | 88.6 | 89.47 |
+| τ²-Bench · 电力技术支持 telecom | 71.53 | 76.49 | 98.42 | 77.14 | 98.25 | 93.4 |
+| τ²-Bench · 航空客服 airline | 66.52 | 63.45 | 68.05 | 74.7 | 86 | 90 |
+| τ²-Bench · OVERALL | 75.02 | 73.61 | 88.7 | 77.27 | 92.09 | 91.11 |
+| LIVE-CODE-BENCH | 93.18 | - | - | 86.92 | 87.46 | 93.18 |
+| SWE-bench_Verified_Mini_Agentic | - | - | - | 85.42 | 81.63 | 90 |
 
 > "-" 表示该模型未提供该数据集结果；详细数据见 `thvv/eval/效果验收标准.xlsx`。
+> `glm-5.3-flash`、`deepseek-v4.1-flash` 两列为 Day0 实测基线，均由本工具 eval 链路跑出（口径为有效题通过率）：
+> - `glm-5.3-flash`：报告生成 2026-08-26，端点 `https://open.bigmodel.cn/api/paas/v4`、Judge `deepseek-v4-flash`，报告见 `day0/glm-5.3-flash/`；
+> - `deepseek-v4.1-flash`：报告生成 2026-09-09~10，模型 id `deepseek-v4.1-flash-expires-on-0910`，端点 `https://api.deepseek.com/v1`、Judge `deepseek-v4-pro`，报告见 `day0/deepseek-v4.1-flash/`。
 
 ---
 

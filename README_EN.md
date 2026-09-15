@@ -1,6 +1,6 @@
 # THVV — TokenHub Vendor Verifier
 
-An all-in-one verification toolkit for running **performance load tests** and **quality evaluations** against large-model vendors. Performance load testing supports OpenAI / Anthropic dual-protocol endpoints, while quality evaluation works with any OpenAI-compatible endpoint. Reports and structured artifacts are produced automatically once a run completes.
+An all-in-one verification toolkit for running **performance load tests**, **quality evaluations** and **API compatibility comparisons** against large-model vendors. Performance load testing supports OpenAI / Anthropic dual-protocol endpoints, quality evaluation works with any OpenAI-compatible endpoint, and compatibility comparison sends the same request to both the vendor endpoint and the origin endpoint in real time. Reports and structured artifacts are produced automatically once a run completes.
 
 > Naming: THVV = TokenHub Vendor Verifier, used for capability verification and artifact archival before a vendor is onboarded.
 
@@ -12,6 +12,7 @@ An all-in-one verification toolkit for running **performance load tests** and **
 |------|------|:---:|
 | `perf` | Performance load testing: full combination of input-length buckets (1k–200k) × concurrency ladders, with success-rate early stopping and adaptive temperature / tokenizer, producing dual reports — **HTML (37-column full metrics + failed-request details) + xlsx** | ✅ |
 | `eval` | Quality evaluation: 11 mainstream datasets (AIME25/26, GPQA-Diamond, HLE, tau2-bench, MMLU-Pro, SimpleQA, LongBench v2, LiveCodeBench, SWE-Bench…), automatically producing the **evaluation report** | ✅ |
+| `e2e` | API compatibility live diff: requires **both vendor-side and origin-side** endpoint / key / model; sends the same request to both in real time, filters differences by rules (R1-R6 + 31 checkpoints), reports each difference **as soon as its case finishes**, supports a **live dashboard**, and produces a **compatibility report** | ✅ |
 
 ---
 
@@ -21,8 +22,8 @@ An all-in-one verification toolkit for running **performance load tests** and **
 ├── README.md / README_EN.md   # This guide (Chinese / English)
 ├── .gitignore                 # Artifacts, dataset caches and secrets are not committed (datasets via Git LFS)
 └── thvv/                      # All entrypoints live under thvv/ (cd thvv first)
-    ├── quickstart.sh          # One-shot entrypoint (check / install / perf / eval)
-    ├── cli.py                 # Unified CLI: python3 thvv/cli.py perf|eval|check|install ...
+    ├── quickstart.sh          # One-shot entrypoint (check / install / perf / eval / e2e)
+    ├── cli.py                 # Unified CLI: python3 thvv/cli.py perf|eval|e2e|check|install ...
     ├── configs/
     │   ├── env.example        # Config template (copy to .env to use)
     │   ├── env.demo           # .env demo (OpenAI + Anthropic protocols)
@@ -37,13 +38,22 @@ An all-in-one verification toolkit for running **performance load tests** and **
     │   ├── references/        # 性能测试报告模板.xlsx (report template)
     │   ├── 性能验收标准.xlsx  # Performance acceptance criteria (perf)
     │   └── results/           # Artifacts: 性能测试报告.html + 性能测试报告.xlsx
-    └── eval/                  # Quality evaluation
-        ├── run.sh             # Subcommands: check / bench / list
-        ├── requirements.txt   # eval dependencies (evalscope pinned to 1.9.0)
-        ├── scripts/run_eval.py       # Evaluation engine (pre-checks + rate-limit retries + packaging)
-        ├── scripts/eval_report_v2.py # Report generator
-        ├── 效果验收标准.xlsx  # Quality acceptance criteria (eval)
-        └── results/           # Artifacts: eval_report_v2.html / eval_summary.json / per_sample_details.csv
+    ├── eval/                  # Quality evaluation
+    │   ├── run.sh             # Subcommands: check / bench / list
+    │   ├── requirements.txt   # eval dependencies (evalscope pinned to 1.9.0)
+    │   ├── scripts/run_eval.py       # Evaluation engine (pre-checks + rate-limit retries + packaging)
+    │   ├── scripts/eval_report_v2.py # Report generator
+    │   ├── 效果验收标准.xlsx  # Quality acceptance criteria (eval)
+    │   └── results/           # Artifacts: eval_report_v2.html / eval_summary.json / per_sample_details.csv
+    └── e2e/                   # API compatibility live diff
+        ├── run.sh             # Subcommands: check / list / bench / report
+        ├── requirements.txt   # e2e dependencies (httpx + pyyaml)
+        ├── rules.json         # Diff rules (R1-R6 + 32 checkpoints + waivers)
+        ├── 对比规则.md         # Rule reference (Chinese)
+        ├── scripts/           # run_e2e.py (engine) / cases.py (loader + validation) / compare.py (diffing) /
+        │                      # reporter.py (live terminal + incremental dump) / live_server.py + live_page.html / gen_report.py
+        ├── cases/             # Cases (params / capabilities / behaviors / combinations)
+        └── results/           # Artifacts: 兼容性对比报告.html / diffs.json / per_case.csv
 ```
 
 ---
@@ -175,22 +185,26 @@ Vendor performance acceptance criteria are defined in [`性能验收标准.xlsx`
 
 Quality acceptance baselines are defined in [`效果验收标准.xlsx`](./thvv/eval/效果验收标准.xlsx), with per-model accuracy allowed to float within **±2-4%**:
 
-| Dataset | kimi-k3 | HY3 | deepseek-v4-flash-0731 | hy4-preview |
-|------|:---:|:---:|:---:|:---:|
-| AIME2026 | 95 | 96.63 | 95.67 | 96 |
-| HLE | 44 | 29.74 | 32.35 | 34.33 |
-| MMLU_Pro | 89.52 | 87.36 | 87.25 | 85.96 |
-| Simple_QA | 46.1 | 34.41 | 37.56 | 33.7 |
-| GPQA-Diamond | 92.76 | 90.66 | 89.73 | 94.44 |
-| LongBench V2 (Short) | 72.22 | 65.54 | 68.89 | 67.56 |
-| τ²-Bench · 智慧零售 retail | 82.22 | 75.18 | 87.7 | 82.22 |
-| τ²-Bench · 电力技术支持 telecom | 71.53 | 76.49 | 98.42 | 77.14 |
-| τ²-Bench · 航空客服 airline | 66.52 | 63.45 | 68.05 | 74.7 |
-| τ²-Bench · OVERALL | 75.02 | 73.61 | 88.7 | 77.27 |
-| LIVE-CODE-BENCH | 93.18 | - | - | 86.92 |
-| SWE-bench_Verified_Mini_Agentic | - | - | - | 85.42 |
+| Dataset | kimi-k3 | HY3 | deepseek-v4-flash-0731 | hy4-preview | glm-5.3-flash | deepseek-v4.1-flash |
+|------|:---:|:---:|:---:|:---:|:---:|:---:|
+| AIME2026 | 95 | 96.63 | 95.67 | 96 | 93.75 | 97.92 |
+| HLE | 44 | 29.74 | 32.35 | 34.33 | 29.24 | 33.37 |
+| MMLU_Pro | 89.52 | 87.36 | 87.25 | 85.96 | 87.58 | 87.86 |
+| Simple_QA | 46.1 | 34.41 | 37.56 | 33.7 | 34.56 | 41.33 |
+| GPQA-Diamond | 92.76 | 90.66 | 89.73 | 94.44 | 90.4 | 90.91 |
+| LongBench V2 (Short) | 72.22 | 65.54 | 68.89 | 67.56 | 67.6 | 64.44 |
+| τ²-Bench · 智慧零售 retail | 82.22 | 75.18 | 87.7 | 82.22 | 88.6 | 89.47 |
+| τ²-Bench · 电力技术支持 telecom | 71.53 | 76.49 | 98.42 | 77.14 | 98.25 | 93.4 |
+| τ²-Bench · 航空客服 airline | 66.52 | 63.45 | 68.05 | 74.7 | 86 | 90 |
+| τ²-Bench · OVERALL | 75.02 | 73.61 | 88.7 | 77.27 | 92.09 | 91.11 |
+| LIVE-CODE-BENCH | 93.18 | - | - | 86.92 | 87.46 | 93.18 |
+| SWE-bench_Verified_Mini_Agentic | - | - | - | 85.42 | 81.63 | 90 |
 
 > "-" means the model did not provide a result for that dataset; see `thvv/eval/效果验收标准.xlsx` for details.
+> The `glm-5.3-flash` and `deepseek-v4.1-flash` columns are Day0 measured baselines produced by this tool's eval pipeline
+> (metric: valid-question pass rate):
+> - `glm-5.3-flash`: reports generated 2026-08-26; endpoint `https://open.bigmodel.cn/api/paas/v4`, judge `deepseek-v4-flash`; see `day0/glm-5.3-flash/`;
+> - `deepseek-v4.1-flash`: reports generated 2026-09-09~10; model id `deepseek-v4.1-flash-expires-on-0910`, endpoint `https://api.deepseek.com/v1`, judge `deepseek-v4-pro`; see `day0/deepseek-v4.1-flash/`.
 
 ---
 
