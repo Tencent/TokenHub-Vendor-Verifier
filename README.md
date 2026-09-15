@@ -190,9 +190,7 @@ thvv/eval/results/<provider>-<model>-<timestamp>/
 | SWE-bench_Verified_Mini_Agentic | - | - | - | 85.42 | 81.63 | 90 |
 
 > "-" 表示该模型未提供该数据集结果；详细数据见 `thvv/eval/效果验收标准.xlsx`。
-> `glm-5.3-flash`、`deepseek-v4.1-flash` 两列为 Day0 实测基线，均由本工具 eval 链路跑出（口径为有效题通过率）：
-> - `glm-5.3-flash`：报告生成 2026-08-26，端点 `https://open.bigmodel.cn/api/paas/v4`、Judge `deepseek-v4-flash`，报告见 `day0/glm-5.3-flash/`；
-> - `deepseek-v4.1-flash`：报告生成 2026-09-09~10，模型 id `deepseek-v4.1-flash-expires-on-0910`，端点 `https://api.deepseek.com/v1`、Judge `deepseek-v4-pro`，报告见 `day0/deepseek-v4.1-flash/`。
+> `glm-5.3-flash`、`deepseek-v4.1-flash` 两列为 Day0 实测基线，由本工具 eval 链路跑出（口径为有效题通过率）。
 
 ---
 
