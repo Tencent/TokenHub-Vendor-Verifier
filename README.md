@@ -190,7 +190,6 @@ thvv/eval/results/<provider>-<model>-<timestamp>/
 | SWE-bench_Verified_Mini_Agentic | - | - | - | 85.42 | 81.63 | 90 |
 
 > "-" 表示该模型未提供该数据集结果；详细数据见 `thvv/eval/效果验收标准.xlsx`。
-> `glm-5.3-flash`、`deepseek-v4.1-flash` 两列为 Day0 实测基线，由本工具 eval 链路跑出（口径为有效题通过率）。
 
 ---
 

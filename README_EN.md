@@ -191,8 +191,6 @@ Quality acceptance baselines are defined in [`效果验收标准.xlsx`](./thvv/e
 | SWE-bench_Verified_Mini_Agentic | - | - | - | 85.42 | 81.63 | 90 |
 
 > "-" means the model did not provide a result for that dataset; see `thvv/eval/效果验收标准.xlsx` for details.
-> The `glm-5.3-flash` and `deepseek-v4.1-flash` columns are Day0 measured baselines produced by this tool's eval pipeline
-> (metric: valid-question pass rate).
 
 ---
 
