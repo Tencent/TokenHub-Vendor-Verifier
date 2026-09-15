@@ -1,6 +1,6 @@
 # THVV — TokenHub Vendor Verifier
 
-An all-in-one verification toolkit for running **performance load tests**, **quality evaluations** and **API compatibility comparisons** against large-model vendors. Performance load testing supports OpenAI / Anthropic dual-protocol endpoints, quality evaluation works with any OpenAI-compatible endpoint, and compatibility comparison sends the same request to both the vendor endpoint and the origin endpoint in real time. Reports and structured artifacts are produced automatically once a run completes.
+An all-in-one verification toolkit for running **performance load tests** and **quality evaluations** against large-model vendors. Performance load testing supports OpenAI / Anthropic dual-protocol endpoints, while quality evaluation works with any OpenAI-compatible endpoint. Reports and structured artifacts are produced automatically once a run completes.
 
 > Naming: THVV = TokenHub Vendor Verifier, used for capability verification and artifact archival before a vendor is onboarded.
 
@@ -12,7 +12,6 @@ An all-in-one verification toolkit for running **performance load tests**, **qua
 |------|------|:---:|
 | `perf` | Performance load testing: full combination of input-length buckets (1k–200k) × concurrency ladders, with success-rate early stopping and adaptive temperature / tokenizer, producing dual reports — **HTML (37-column full metrics + failed-request details) + xlsx** | ✅ |
 | `eval` | Quality evaluation: 11 mainstream datasets (AIME25/26, GPQA-Diamond, HLE, tau2-bench, MMLU-Pro, SimpleQA, LongBench v2, LiveCodeBench, SWE-Bench…), automatically producing the **evaluation report** | ✅ |
-| `e2e` | API compatibility live diff: requires **both vendor-side and origin-side** endpoint / key / model; sends the same request to both in real time, filters differences by rules (R1-R6 + 31 checkpoints), reports each difference **as soon as its case finishes**, supports a **live dashboard**, and produces a **compatibility report** | ✅ |
 
 ---
 
@@ -22,8 +21,8 @@ An all-in-one verification toolkit for running **performance load tests**, **qua
 ├── README.md / README_EN.md   # This guide (Chinese / English)
 ├── .gitignore                 # Artifacts, dataset caches and secrets are not committed (datasets via Git LFS)
 └── thvv/                      # All entrypoints live under thvv/ (cd thvv first)
-    ├── quickstart.sh          # One-shot entrypoint (check / install / perf / eval / e2e)
-    ├── cli.py                 # Unified CLI: python3 thvv/cli.py perf|eval|e2e|check|install ...
+    ├── quickstart.sh          # One-shot entrypoint (check / install / perf / eval)
+    ├── cli.py                 # Unified CLI: python3 thvv/cli.py perf|eval|check|install ...
     ├── configs/
     │   ├── env.example        # Config template (copy to .env to use)
     │   ├── env.demo           # .env demo (OpenAI + Anthropic protocols)
@@ -38,22 +37,13 @@ An all-in-one verification toolkit for running **performance load tests**, **qua
     │   ├── references/        # 性能测试报告模板.xlsx (report template)
     │   ├── 性能验收标准.xlsx  # Performance acceptance criteria (perf)
     │   └── results/           # Artifacts: 性能测试报告.html + 性能测试报告.xlsx
-    ├── eval/                  # Quality evaluation
-    │   ├── run.sh             # Subcommands: check / bench / list
-    │   ├── requirements.txt   # eval dependencies (evalscope pinned to 1.9.0)
-    │   ├── scripts/run_eval.py       # Evaluation engine (pre-checks + rate-limit retries + packaging)
-    │   ├── scripts/eval_report_v2.py # Report generator
-    │   ├── 效果验收标准.xlsx  # Quality acceptance criteria (eval)
-    │   └── results/           # Artifacts: eval_report_v2.html / eval_summary.json / per_sample_details.csv
-    └── e2e/                   # API compatibility live diff
-        ├── run.sh             # Subcommands: check / list / bench / report
-        ├── requirements.txt   # e2e dependencies (httpx + pyyaml)
-        ├── rules.json         # Diff rules (R1-R6 + 32 checkpoints + waivers)
-        ├── 对比规则.md         # Rule reference (Chinese)
-        ├── scripts/           # run_e2e.py (engine) / cases.py (loader + validation) / compare.py (diffing) /
-        │                      # reporter.py (live terminal + incremental dump) / live_server.py + live_page.html / gen_report.py
-        ├── cases/             # Cases (params / capabilities / behaviors / combinations)
-        └── results/           # Artifacts: 兼容性对比报告.html / diffs.json / per_case.csv
+    └── eval/                  # Quality evaluation
+        ├── run.sh             # Subcommands: check / bench / list
+        ├── requirements.txt   # eval dependencies (evalscope pinned to 1.9.0)
+        ├── scripts/run_eval.py       # Evaluation engine (pre-checks + rate-limit retries + packaging)
+        ├── scripts/eval_report_v2.py # Report generator
+        ├── 效果验收标准.xlsx  # Quality acceptance criteria (eval)
+        └── results/           # Artifacts: eval_report_v2.html / eval_summary.json / per_sample_details.csv
 ```
 
 ---
