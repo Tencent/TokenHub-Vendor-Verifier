@@ -276,12 +276,12 @@ cmd_report() {
 parallel_number() {
     case "$1" in
         1)   echo 20  ;;
-        4)   echo 50  ;;
-        8)   echo 100 ;;
-        16)  echo 150 ;;
-        32)  echo 250 ;;
-        64)  echo 400 ;;
-        128) echo 500 ;;
+        4)   echo 40  ;;
+        8)   echo 60  ;;
+        16)  echo 80  ;;
+        32)  echo 120 ;;
+        64)  echo 200 ;;
+        128) echo 400 ;;
         *)   echo 100 ;;
     esac
 }
