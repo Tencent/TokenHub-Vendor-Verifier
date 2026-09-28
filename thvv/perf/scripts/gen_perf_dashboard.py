@@ -7,7 +7,8 @@
   二、并发梯度对比    按并发梯度做矩阵，一行一个并发档，横向比指标
   三、失败分析        失败原因聚合统计（不再逐条罗列）
   四、失败请求明细    逐条罗列所有失败请求（HTTP状态码 / 请求Body / 响应Body /
-                      TTFT / TTLT，不提取 Request ID，与效果评测口径一致）
+                   TTFT / TTLT，不提取 Request ID，与效果评测口径一致）
+  五、SLA 档位汇总    按输入长度档位（sla_eval 6 档）输出 SLA 判定字段与达标 TPM
 
 用法:
   python3 scripts/gen_perf_dashboard.py --results-dir results --out 性能测试报告.html
@@ -21,35 +22,75 @@ import math
 import os
 import re
 import sqlite3
+import sys
 from collections import Counter, defaultdict
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from sla_eval import RATE_MIN_TOKENS_PER_SEC, classify_tier, get_tier_thresholds  # noqa: E402
 
-def find_dbs(root: str) -> List[Tuple[str, str, int, int, str]]:
+
+def find_dbs(root: str) -> List[Tuple[str, str, int, int, str, int]]:
     """在结果目录下递归查找 benchmark_data.db。
 
     返回 (db路径, bucket, parallel, number, vendor) 元组列表。
-    目录约定：.../perf-<bucket>-<ts>/<vendor>/parallel_<p>_number_<n>/benchmark_data.db
+    目录约定：
+      bench:    .../perf-<bucket>-<ts>/<vendor>/parallel_<p>_number_<n>/benchmark_data.db
+      sla-tune: .../sla-tune-<bucket>-<ts>/<model>/sla_tuning/sla_parallel_<p>_run_<i>/benchmark_data.db
     """
     found = []
     for dirpath, _dirs, files in os.walk(root, followlinks=True):
         if "benchmark_data.db" not in files:
             continue
+        # 跳过归档目录（如 *.no-nonce.bak / *.aborted.bak）
+        if ".bak" in dirpath:
+            continue
         db = os.path.join(dirpath, "benchmark_data.db")
         parts = dirpath.replace("\\", "/").split("/")
         bucket = parallel = number = vendor = ""
+        run_idx = 0
         for part in parts:
-            m = re.match(r"^perf-([0-9a-zA-Z]+)-\d{8}-\d{4}$", part)
+            m = re.match(r"^perf-([0-9a-zA-Z]+)-\d{8}-\d{4,6}$", part)
+            if m:
+                bucket = m.group(1)
+            m = re.match(r"^sla-tune-([0-9a-zA-Z]+)-\d{8}-\d{4,6}$", part)
             if m:
                 bucket = m.group(1)
             m = re.match(r"^parallel_(\d+)_number_(\d+)$", part)
             if m:
                 parallel, number = int(m.group(1)), int(m.group(2))
-        # vendor 是 parallel_xx_number_xx 的上一级
+            m = re.match(r"^sla_parallel_(\d+)_run_(\d+)$", part)
+            if m:
+                parallel, run_idx = int(m.group(1)), int(m.group(2))
+        # vendor 是 parallel_xx_number_xx 的上一级；sla-tune 结构下 sla_tuning 的上一级是模型名
         if "parallel_" in dirpath:
             vendor = os.path.basename(os.path.dirname(dirpath))
-        found.append((db, bucket or "?", parallel or 0, number or 0, vendor or "?"))
-    return sorted(found, key=lambda x: (x[1], x[2]))
+            if vendor == "sla_tuning":
+                vendor = os.path.basename(os.path.dirname(os.path.dirname(dirpath)))
+        found.append((db, bucket or "?", parallel or 0, number or 0, vendor or "?",
+                      run_idx))
+
+    def _bucket_num(bucket: str) -> int:
+        m = re.match(r"^(\d+)", str(bucket))
+        return int(m.group(1)) if m else 10**9
+
+    # 按输入长度档位升序（1k → 9k → 16k → ... → 200k），同档位内按并发数升序，同并发按 run 序号
+    return sorted(found, key=lambda x: (_bucket_num(x[1]), x[2], x[5]))
+
+
+def _read_cache_hit(db_path) -> Optional[float]:
+    """从同 run 的 performance_summary.txt 读 Cache Hit (%)（evalscope 口径）。
+    summary 位于 <run>/<model>/performance_summary.txt（db 的上两级目录）。"""
+    try:
+        sm = os.path.join(os.path.dirname(os.path.dirname(db_path)), "performance_summary.txt")
+        if not os.path.exists(sm):
+            return None
+        with open(sm, encoding="utf-8", errors="ignore") as f:
+            m = re.search(r"Cache Hit \(%\)\s*│\s*([0-9.]+)%", f.read())
+        return float(m.group(1)) if m else None
+    except Exception:
+        return None
 
 
 def load_rows(db: str) -> List[dict]:
@@ -70,6 +111,13 @@ def _mean(vals: List[float]) -> Optional[float]:
     return sum(vals) / len(vals) if vals else None
 
 
+def _fmt_wan(v: Optional[float], nd: int = 2) -> str:
+    """TPM 类指标以 万（tokens/min / 10^4）为单位展示。"""
+    if v is None:
+        return "-"
+    return f"{v / 10000:.{nd}f} 万"
+
+
 def _pct(sorted_vals: List[float], p: float) -> Optional[float]:
     """分位数（线性插值），与 gen_report_from_db.py xlsx 口径一致。"""
     if not sorted_vals:
@@ -87,7 +135,7 @@ def compute_stats(rows: List[dict]) -> dict:
     ok_rows = [r for r in rows if int(r.get("success") or 0) == 1]
     fail_rows = [r for r in rows if int(r.get("success") or 0) != 1]
 
-    lat, ttft, tpot, rates, itl = [], [], [], [], []
+    lat, ttft, tpot, rates = [], [], [], []
     prompt_tok, compl_tok = [], []
     for r in ok_rows:
         v = r.get("latency")
@@ -96,9 +144,6 @@ def compute_stats(rows: List[dict]) -> dict:
         v = r.get("first_chunk_latency")
         if v is not None:
             ttft.append(float(v))
-        v = r.get("time_per_output_token")
-        if v is not None:
-            tpot.append(float(v))
         v = r.get("prompt_tokens")
         if v is not None:
             prompt_tok.append(float(v))
@@ -106,24 +151,17 @@ def compute_stats(rows: List[dict]) -> dict:
         if v is not None:
             compl_tok.append(float(v))
         # Rate(t/s)：completion / (latency - ttft)，条件与 xlsx 口径一致
+        # TPOT(ms)：(latency - ttft) / (completion_tokens - 1) * 1000，与 xlsx 口径一致
         if r.get("completion_tokens") is not None and r.get("latency") is not None:
             c = float(r["completion_tokens"] or 0)
             l = float(r["latency"] or 0)
             t = float(r["first_chunk_latency"] or 0)
             if c >= 5 and (l - t) >= 0.1:
                 rates.append(c / (l - t))
-        # ITL：inter_token_latencies JSON 列表
-        v = r.get("inter_token_latencies")
-        if v:
-            try:
-                vals = json.loads(v) if isinstance(v, str) else v
-                if isinstance(vals, list):
-                    itl.extend(x for x in vals if isinstance(x, (int, float)))
-            except (json.JSONDecodeError, TypeError):
-                pass
+            if c >= 2 and (l - t) >= 0:
+                tpot.append((l - t) / (c - 1) * 1000.0)
 
-    lat_s, ttft_s = sorted(lat), sorted(ttft)
-    itl_s, rates_s = sorted(itl), sorted(rates)
+    lat_s, ttft_s, tpot_s, rates_s = sorted(lat), sorted(ttft), sorted(tpot), sorted(rates)
     total_out = sum(compl_tok)
     total_in = sum(prompt_tok)
 
@@ -155,17 +193,17 @@ def compute_stats(rows: List[dict]) -> dict:
         "latency_p90": _pct(lat_s, 90),
         "latency_p95": _pct(lat_s, 95),
         "latency_p99": _pct(lat_s, 99),
-        # Rate（生成速率）与 ITL（token 间隔）
+        # Rate（生成速率）与 TPOT（每输出 token 时延，ms；与 xlsx 矩阵压测汇总口径一致）
         "rate_mean": _mean(rates),
         "rate_p50": _pct(rates_s, 50),
         "rate_p90": _pct(rates_s, 90),
         "rate_p95": _pct(rates_s, 95),
         "rate_p99": _pct(rates_s, 99),
-        "itl_mean": _mean(itl),
-        "itl_p50": _pct(itl_s, 50),
-        "itl_p90": _pct(itl_s, 90),
-        "itl_p95": _pct(itl_s, 95),
-        "itl_p99": _pct(itl_s, 99),
+        "tpot_mean": _mean(tpot),
+        "tpot_p50": _pct(tpot_s, 50),
+        "tpot_p90": _pct(tpot_s, 90),
+        "tpot_p95": _pct(tpot_s, 95),
+        "tpot_p99": _pct(tpot_s, 99),
         # Tokens
         "prompt_tokens_mean": _mean(prompt_tok),
         "completion_tokens_mean": _mean(compl_tok),
@@ -177,8 +215,6 @@ def compute_stats(rows: List[dict]) -> dict:
         "output_tpm": (output_tps * 60) if output_tps is not None else None,
         "input_tpm": (input_tps * 60) if input_tps is not None else None,
         "tpm": tpm,
-        # 兼容旧引用
-        "tpot_mean": _mean(tpot),
         "decode_tps": _mean(rates),
         "wall_clock": wall,
     }
@@ -266,18 +302,21 @@ def _fmt(v: Any, prec: int = 2, dash: str = '-') -> str:
         return str(v)
 
 
-def render(dbs: List[Tuple[str, str, int, int, str]], title: str,
+def render(dbs: List[Tuple[str, str, int, int, str, int]], title: str,
            model_hint: str = "") -> str:
     groups = defaultdict(list)
     vendors = set()
     fail_items: List[dict] = []
-    for db, bucket, parallel, number, vendor in dbs:
+    for db, bucket, parallel, number, vendor, run_idx in dbs:
         rows = load_rows(db)
         if not rows:
             continue
         st = compute_stats(rows)
         st.update({"bucket": bucket, "parallel": parallel,
                    "number": number, "vendor": vendor})
+        ch = _read_cache_hit(db)
+        st["cache_hit"] = ch
+        st["cached_tokens"] = (st.get("prompt_tokens_mean") or 0) * ch / 100 if ch is not None else None
         st["_failure_reasons"] = failure_reasons(rows)
         groups[bucket].append(st)
         vendors.add(vendor)
@@ -326,6 +365,11 @@ tbody td:first-child{{text-align:left;font-weight:600}}
 tbody tr:hover td{{background:#f8fafc}}
 .bad{{color:#dc2626;font-weight:600}}
 .good{{color:#16a34a;font-weight:600}}
+/* 染色规则与 Excel 模板一致（模板说明 Sheet） */
+.sr-full{{background:#C6EFCE}}
+.sr-warn{{background:#FFEB9C}}
+.sr-fail{{background:#FFC7CE}}
+.sla-red{{background:#C00000;color:#fff;font-weight:700}}
 .note{{background:#fff;border-left:4px solid #2563eb;border-radius:0 8px 8px 0;
 padding:12px 16px;margin:12px 0 20px}}
 .note ul{{margin:6px 0 0 18px}}
@@ -361,9 +405,15 @@ white-space:pre-wrap;word-break:break-word;max-height:240px;overflow:auto}}
 <div class="note">{overall_note(all_stats, overall_rate, overall_fail)}</div>
 """)
 
-    # ── 二、并发梯度矩阵（每个 bucket 一张表；指标与 xlsx 性能指标 sheet 完全同口径）──
+    # ── 二、并发梯度矩阵（每个 bucket 一张表；指标与 xlsx 矩阵压测汇总 sheet 完全同口径）──
     P.append("<h2>二、并发梯度对比</h2>")
-    for bucket in sorted(groups):
+    import re as _re
+
+    def _bucket_sort_key(b: str) -> int:
+        m = _re.match(r"^(\d+)", str(b))
+        return int(m.group(1)) if m else 10**9
+
+    for bucket in sorted(groups, key=_bucket_sort_key):
         stats = sorted(groups[bucket], key=lambda s: s["parallel"])
         P.append(f"<h3>档位 {bucket}</h3>")
         P.append('<div class="table-wrap"><table><thead><tr>'
@@ -372,14 +422,15 @@ white-space:pre-wrap;word-break:break-word;max-height:240px;overflow:auto}}
                  '<th>P50 TTFT(s)</th><th>P90 TTFT(s)</th><th>P95 TTFT(s)</th><th>P99 TTFT(s)</th>'
                  '<th>Avg TTLT(s)</th><th>P50 TTLT(s)</th><th>P90 TTLT(s)</th><th>P95 TTLT(s)</th><th>P99 TTLT(s)</th>'
                  '<th>Avg Rate(t/s)</th><th>P50 Rate(t/s)</th><th>P90 Rate(t/s)</th><th>P95 Rate(t/s)</th><th>P99 Rate(t/s)</th>'
-                 '<th>Avg ITL(s)</th><th>P50 ITL(s)</th><th>P90 ITL(s)</th><th>P95 ITL(s)</th><th>P99 ITL(s)</th>'
+                 '<th>Avg TPOT(ms)</th><th>P50 TPOT(ms)</th><th>P90 TPOT(ms)</th><th>P95 TPOT(ms)</th><th>P99 TPOT(ms)</th>'
                  '<th>Avg Prompt Tokens</th><th>Avg Completion Tokens</th><th>Total Tokens</th>'
                  '<th>Avg Cached Tokens</th><th>Avg Cache Hit Ratio</th><th>Avg Total Time(ms)</th>'
                  '<th>Output TPM</th><th>Output TPS</th><th>Input TPM</th><th>TPM</th>'
                  '</tr></thead><tbody>')
         for s in stats:
             rate = s["success_rate"]
-            cls = "good" if rate >= 0.95 else ("bad" if rate < 0.8 else "")
+            # 成功率染色：与 Excel 模板规则一致（=100% 绿 / ≥95% 黄 / <95% 红）
+            cls = "sr-full" if rate >= 0.9999 else ("sr-warn" if rate >= 0.95 else "sr-fail")
             cells = [
                 str(s["parallel"]), str(s["total"]), str(s["success"]), str(s["failed"]),
                 f'<span class="{cls}">{rate:.2%}</span>',
@@ -390,15 +441,30 @@ white-space:pre-wrap;word-break:break-word;max-height:240px;overflow:auto}}
                 _fmt(s["latency_p95"], 3), _fmt(s["latency_p99"], 3),
                 _fmt(s["rate_mean"], 3), _fmt(s["rate_p50"], 3), _fmt(s["rate_p90"], 3),
                 _fmt(s["rate_p95"], 3), _fmt(s["rate_p99"], 3),
-                _fmt(s["itl_mean"], 3), _fmt(s["itl_p50"], 3), _fmt(s["itl_p90"], 3),
-                _fmt(s["itl_p95"], 3), _fmt(s["itl_p99"], 3),
+                _fmt(s["tpot_mean"], 2), _fmt(s["tpot_p50"], 2), _fmt(s["tpot_p90"], 2),
+                _fmt(s["tpot_p95"], 2), _fmt(s["tpot_p99"], 2),
                 _fmt(s["prompt_tokens_mean"], 1), _fmt(s["completion_tokens_mean"], 1),
                 f"{s['total_tokens']:,}",
-                "-", "-",  # Avg Cached Tokens / Avg Cache Hit Ratio：数据源未提供
+                _fmt(s.get("cached_tokens"), 1),
+                (f'<span class="sr-warn">{s["cache_hit"]:.1f}%</span>'
+                 if s.get("cache_hit") else "-"),  # Cache Hit: >0 即警示（数据口径污染风险）
                 _fmt(s["avg_total_ms"]),
-                _fmt(s["output_tpm"]), _fmt(s["output_tps"]),
-                _fmt(s["input_tpm"]), _fmt(s["tpm"]),
+                _fmt_wan(s["output_tpm"]), _fmt(s["output_tps"]),
+                _fmt_wan(s["input_tpm"]), _fmt_wan(s["tpm"]),
             ]
+            # SLA 染色（3 项，腾讯验收口径，与 Excel 一致）：cells 索引
+            #   5=Avg TTFT / 9=P90 TTFT（超档位阈值）、17=Avg Rate（OTPS 口径，≤30 t/s）
+            tier = classify_tier(s.get("prompt_tokens_mean"))
+            th = get_tier_thresholds(tier)
+            sla_hit = {}
+            if s.get("ttft_mean") is not None and s["ttft_mean"] > th["p50"]:
+                sla_hit[5] = True
+            if s.get("ttft_p90") is not None and s["ttft_p90"] > th["p90"]:
+                sla_hit[9] = True
+            if s.get("rate_mean") is not None and s["rate_mean"] <= RATE_MIN_TOKENS_PER_SEC:
+                sla_hit[17] = True
+            for idx in sla_hit:
+                cells[idx] = f'<span class="sla-red">{cells[idx]}</span>'
             P.append("<tr>" + "".join(f"<td>{c}</td>" for c in cells) + "</tr>")
         P.append("</tbody></table></div>")
 
@@ -426,9 +492,123 @@ white-space:pre-wrap;word-break:break-word;max-height:240px;overflow:auto}}
     if fail_items:
         P.append(render_failure_details(fail_items))
 
+    # ── 五、SLA 档位汇总（各输入长度档位的 SLA 判定 + 达标 TPM）──
+    P.append(render_sla_tiers(all_stats))
+
     P.append('<div class="footer">由 THVV · TokenHub Vendor Verifier 生成</div>')
     P.append("</body></html>")
     return "\n".join(P)
+
+
+_SLA_TIER_ORDER = ["<4K", "<8K", "<32K", "<64K", "<128K", "<256K"]
+
+# bucket → tier 硬映射，与 run.sh sla_params_for_bucket / evalscope auto-tune 完全一致；
+# classify_tier（按实际平均输入长度归档）在 32k 档（输入 28k~36k 跨 <32K/<64K 边界）会抖动错档
+_BUCKET_TIER = {
+    "1k": "<4K",
+    "9k": "<32K",
+    "16k": "<32K",
+    "32k": "<64K",
+    "64k": "<128K",
+    "128k": "<256K",
+    "200k": "<256K",
+}
+
+
+def _tier_for_bucket(bucket):
+    return _BUCKET_TIER.get(str(bucket).lower())
+
+
+def _avg_group(group, key):
+    vals = [g.get(key) for g in group if g.get(key) is not None]
+    return (sum(vals) / len(vals)) if vals else None
+
+
+def render_sla_tiers(all_stats: List[dict]) -> str:
+    """按测试档位（bucket：1k/9k/.../200k）汇总，输出每档满足 SLA 的最佳并发数据。
+
+    SLA 判定 3 项（腾讯验收口径，run 级），与 xlsx「SLA 档位汇总」sheet / sla_eval / evalscope
+    auto-tune 完全一致：
+      1. TTFT：Avg TTFT 对标 P50 阈值 + P90 TTFT 对标 P90 阈值
+         （该档 run 平均输入长度归入 sla_eval 6 档取阈值；Avg 对标 P50 阈值与
+          sla_eval "Avg TTFB > P50 阈值" 及 evalscope sla-params avg_ttft 口径一致）
+      2. 成功率：= 100%
+      3. OTPS：Avg Rate(t/s)（单请求生成速率）≥ 30 t/s
+    最佳并发 = 满足 SLA 的 run 中并发最大者（该档位满足 SLA 的最大吞吐点）。
+    """
+    bucket_rows: Dict[str, List[dict]] = defaultdict(list)
+    for s in all_stats:
+        b = s.get("bucket")
+        if b:
+            bucket_rows[b].append(s)
+
+    out = [
+        '<h2>五、SLA 档位汇总</h2>',
+        '<p class="meta">按测试档位（1k → 200k）汇总：SLA 3 项 = ① TTFT：Avg TTFT ≤ P50 阈值且 P90 TTFT ≤ P90 阈值'
+        '（按该档平均输入长度归入 sla_eval 6 档取阈值，Avg 对标 P50 阈值与 sla_eval / evalscope auto-tune 口径一致）；'
+        '② 成功率 100%；③ OTPS（Avg Rate 单请求生成速率）≥ 30 t/s。'
+        '最佳并发 = 满足 SLA 的最大并发；TPM 为万单位。</p>',
+        '<div class="table-wrap"><table><thead><tr>'
+        '<th>输入长度档位</th>'
+        '<th>P50 TTFT 阈值(s)</th><th>P90 TTFT 阈值(s)</th>'
+        '<th>SLA 达标</th><th>最佳并发</th>'
+        '<th>最佳并发 Avg TTFT(s)</th><th>最佳并发 P90 TTFT(s)</th>'
+        '<th>成功率</th><th>Avg Rate(OTPS t/s)</th><th>TPM</th>'
+        '</tr></thead><tbody>',
+    ]
+
+    def _bucket_sort_key(b: str) -> int:
+        m = re.match(r"^(\d+)", str(b))
+        return int(m.group(1)) if m else 10**9
+
+    for bucket in sorted(bucket_rows, key=_bucket_sort_key):
+        rs = bucket_rows[bucket]
+        # tier 优先按 bucket 名硬映射（与 run.sh sla_params_for_bucket / auto-tune 一致），
+        # 避免 classify_tier 按实际平均输入归档在档位边界抖动（如 32k 档输入 28k~36k 跨 <32K/<64K）
+        tier = _tier_for_bucket(bucket) or classify_tier(
+            _mean([s.get("prompt_tokens_mean") for s in rs
+                   if s.get("prompt_tokens_mean") is not None]))
+        th = get_tier_thresholds(tier)
+        # 同并发多 run（sla-tune num_runs>1 产生 run_0/run_1）聚合平均后再判定，
+        # 与 evalscope auto-tune 的 num_runs 平均判定口径一致
+        by_parallel: Dict[int, List[dict]] = defaultdict(list)
+        for s in rs:
+            by_parallel.setdefault(s.get("parallel", 0), []).append(s)
+        agg_rows = []
+        for _p, group in by_parallel.items():
+            agg = dict(group[0])
+            for k in ("ttft_mean", "ttft_p50", "ttft_p90", "success_rate",
+                      "rate_mean", "tpm", "prompt_tokens_mean"):
+                agg[k] = _avg_group(group, k)
+            agg_rows.append(agg)
+        # 达标口径：Avg TTFT ≤ P50 阈值（非 P50 TTFT），与 sla_eval / auto-tune 一致
+        passing = [s for s in agg_rows
+                   if s.get("ttft_mean") is not None and s["ttft_mean"] <= th["p50"]
+                   and s.get("ttft_p90") is not None and s["ttft_p90"] <= th["p90"]
+                   and s.get("success_rate") is not None and s["success_rate"] >= 0.9999
+                   and s.get("rate_mean") is not None and s["rate_mean"] >= RATE_MIN_TOKENS_PER_SEC]
+        best = max(passing, key=lambda s: s.get("parallel", 0)) if passing else None
+        sr_txt = f"{best['success_rate']:.2%}" if best else "-"
+
+        def _ok(flag: bool) -> str:
+            cls = "sr-full" if flag else "sr-fail"
+            return f'<span class="{cls}">{"✓" if flag else "✗"}</span>'
+
+        out.append(
+            "<tr>"
+            f'<td>{bucket}</td>'
+            f'<td>{_fmt(th["p50"], 1)}</td><td>{_fmt(th["p90"], 1)}</td>'
+            f'<td>{_ok(best is not None)}</td>'
+            f'<td>{best["parallel"] if best else "-"}</td>'
+            f'<td>{_fmt(best["ttft_mean"], 3) if best else "-"}</td>'
+            f'<td>{_fmt(best["ttft_p90"], 3) if best else "-"}</td>'
+            f'<td>{sr_txt}</td>'
+            f'<td>{_fmt(best["rate_mean"], 2) if best else "-"}</td>'
+            f'<td>{_fmt_wan(best["tpm"]) if best else "-"}</td>'
+            "</tr>"
+        )
+    out.append("</tbody></table></div>")
+    return "\n".join(out)
 
 
 def overall_note(all_stats: List[dict], rate: float, fail: int) -> str:

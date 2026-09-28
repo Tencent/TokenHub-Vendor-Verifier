@@ -41,7 +41,7 @@ from typing import Any, Dict, List, Optional, Tuple
 # ---------------------------------------------------------------------------
 TIERS: List[Tuple[str, int, int, Dict[str, float]]] = [
     # (tier_name, lo_inclusive, hi_exclusive, {"p50": TTFT阈值秒, "p90": TTFT阈值秒})
-    ("<4K",   1_000,   4_000,   {"p50": 2.0,  "p90": 5.0}),
+    ("<4K",   0,       4_000,   {"p50": 2.0,  "p90": 5.0}),
     ("<8K",   4_000,   8_000,   {"p50": 2.5,  "p90": 5.0}),
     ("<32K",  8_000,   32_000,  {"p50": 4.0,  "p90": 8.0}),
     ("<64K",  32_000,  64_000,  {"p50": 8.0,  "p90": 15.0}),
@@ -54,7 +54,7 @@ RATE_MIN_TOKENS_PER_SEC = 30.0   # avg_token_rates 必须 > 30
 
 
 def classify_tier(avg_prompt_tokens: Optional[float]) -> Optional[str]:
-    """按 avg_prompt_tokens 归档。越界（< 1K 或 ≥ 256K）返回 None。"""
+    """按 avg_prompt_tokens 归档。越界（< 0 或 ≥ 256K）返回 None。"""
     if avg_prompt_tokens is None:
         return None
     try:
@@ -199,6 +199,18 @@ def evaluate_sla(
         p90_all = sum(p90_list) / len(p90_list) if p90_list else None
         p50_pass = (p50_all is None) or (p50_all <= th["p50"])
         p90_pass = (p90_all is None) or (p90_all <= th["p90"])
+        # 该档位满足 SLA 的最大并发（达标行 = per_row_pass 为 True 的行，含成功率/OTPS/TPM 检查）
+        best_parallel = None
+        for idx in bucket["row_indices"]:
+            if not per_row_pass[idx]:
+                continue
+            conc = rows[idx].get("concurrency")
+            try:
+                conc_i = int(conc)
+            except (TypeError, ValueError):
+                continue
+            if best_parallel is None or conc_i > best_parallel:
+                best_parallel = conc_i
         tier_summary.append({
             "tier": name,
             "row_indices": bucket["row_indices"],
@@ -208,9 +220,18 @@ def evaluate_sla(
             "p90_threshold": th["p90"],
             "p50_pass": p50_pass,
             "p90_pass": p90_pass,
+            "best_parallel": best_parallel,
         })
 
-    overall_pass = all(per_row_pass) and all(
+    # 空数据保护：没有任何有效行时不允许 vacuous pass（否则无数据也 overall_pass=True 误报验收通过）
+    if rows and not per_row_pass:
+        per_row_pass = [False]
+        per_row_violations = [["no valid rows: 全部行均因成功率不足被跳过（或无有效统计数据）"]]
+    elif not rows:
+        per_row_pass = [False]
+        per_row_violations = [["no data: 未从输入目录装配到任何压测行（缺少 benchmark_summary.json / db）"]]
+
+    overall_pass = bool(per_row_pass) and all(per_row_pass) and all(
         item["p50_pass"] and item["p90_pass"] for item in tier_summary
     )
 
@@ -252,9 +273,10 @@ def _build_aggregated_from_evalscope_group(group_dir: Path) -> Dict[str, Any]:
     # 直接 follow symlink，按运行时间排序保持稳定
     run_dirs = sorted(
         [p for p in group_dir.iterdir()
-         if p.is_dir() or p.is_symlink()
+         if (p.is_dir() or p.is_symlink())
          and not p.name.startswith("_")
-         and p.name != "summary"],
+         and p.name != "summary"
+         and ".bak" not in p.name],
         key=lambda p: p.name,
     )
 
@@ -262,68 +284,72 @@ def _build_aggregated_from_evalscope_group(group_dir: Path) -> Dict[str, Any]:
         # 资源目录跳过
         if run_dir.name in {"summary", "group.log"} or run_dir.name.endswith(".log"):
             continue
-        bench_summary = next(run_dir.rglob("benchmark_summary.json"), None)
-        if bench_summary is None:
-            continue
-        try:
-            summary = json.loads(bench_summary.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-
-        pct_path = bench_summary.parent / "benchmark_percentile.json"
-        p50_ttft_s: Optional[float] = None
-        p90_ttft_s: Optional[float] = None
-        if pct_path.is_file():
+        # 收集该 run 下全部并发点的 benchmark_summary.json（sla-tune 每档多个并发点，
+        # 旧的 next(rglob) 只取随机一个，导致复判行选取错误）
+        summaries = sorted(
+            (p for p in run_dir.rglob("benchmark_summary.json") if ".bak" not in str(p)),
+            key=lambda p: str(p),
+        )
+        for bench_summary in summaries:
             try:
-                pct_list = json.loads(pct_path.read_text(encoding="utf-8")) or []
-                for item in pct_list:
-                    pct = str(item.get("Percentiles", "")).strip()
-                    ttft_ms = item.get("TTFT (ms)")
-                    if ttft_ms is None:
-                        continue
-                    if pct == "50%":
-                        p50_ttft_s = float(ttft_ms) / 1000.0
-                    elif pct == "90%":
-                        p90_ttft_s = float(ttft_ms) / 1000.0
+                summary = json.loads(bench_summary.read_text(encoding="utf-8"))
             except Exception:
-                pass
+                continue
 
-        total_req = float(summary.get("Total Requests", 0) or 0)
-        success_req = float(summary.get("Success Requests", 0) or 0)
-        success_rate_f = (success_req / total_req) if total_req > 0 else 0.0
+            pct_path = bench_summary.parent / "benchmark_percentile.json"
+            p50_ttft_s: Optional[float] = None
+            p90_ttft_s: Optional[float] = None
+            if pct_path.is_file():
+                try:
+                    pct_list = json.loads(pct_path.read_text(encoding="utf-8")) or []
+                    for item in pct_list:
+                        pct = str(item.get("Percentiles", "")).strip()
+                        ttft_ms = item.get("TTFT (ms)")
+                        if ttft_ms is None:
+                            continue
+                        if pct == "50%":
+                            p50_ttft_s = float(ttft_ms) / 1000.0
+                        elif pct == "90%":
+                            p90_ttft_s = float(ttft_ms) / 1000.0
+                except Exception:
+                    pass
 
-        avg_ttft_ms = summary.get("TTFT (ms)")
-        avg_ttft_s = (float(avg_ttft_ms) / 1000.0) if avg_ttft_ms is not None else None
+            total_req = float(summary.get("Total Requests", 0) or 0)
+            success_req = float(summary.get("Success Requests", 0) or 0)
+            success_rate_f = (success_req / total_req) if total_req > 0 else 0.0
 
-        # 优先取 Total Throughput（输入+输出合计吞吐），与旧 SLA "avg_token_rates ≥ 30" 语义对齐
-        total_tps = summary.get("Total Throughput (tok/s)")
-        if total_tps is None:
-            total_tps = summary.get("Output Throughput (tok/s)")
-        token_rate = float(total_tps) if total_tps is not None else None
-        tpm_val = (token_rate * 60.0) if token_rate is not None else None
+            avg_ttft_ms = summary.get("TTFT (ms)")
+            avg_ttft_s = (float(avg_ttft_ms) / 1000.0) if avg_ttft_ms is not None else None
 
-        rows.append({
-            # 元数据：复用 run 目录名作为 dataset 标签（含 label / 时间戳）
-            "dataset": run_dir.name,
-            "concurrency": summary.get("Concurrency"),
-            "total_requests": int(total_req) if total_req else 0,
-            "success_requests": int(success_req) if success_req else 0,
-            "failed_requests": int(summary.get("Failed Requests", 0) or 0),
-            "success_rate_f": success_rate_f,
-            "stats": {
-                "avg_prompt_tokens": summary.get("Avg Input Tokens"),
-                "avg_output_tokens": summary.get("Avg Output Tokens"),
-                "ttfb": {
-                    "avg": avg_ttft_s,
-                    "p50": p50_ttft_s if p50_ttft_s is not None else avg_ttft_s,
-                    "p90": p90_ttft_s if p90_ttft_s is not None else avg_ttft_s,
+            # 优先取 Total Throughput（输入+输出合计吞吐），与旧 SLA "avg_token_rates ≥ 30" 语义对齐
+            total_tps = summary.get("Total Throughput (tok/s)")
+            if total_tps is None:
+                total_tps = summary.get("Output Throughput (tok/s)")
+            token_rate = float(total_tps) if total_tps is not None else None
+            tpm_val = (token_rate * 60.0) if token_rate is not None else None
+
+            rows.append({
+                # 元数据：run 目录名 + 并发点（sla-tune 每档多个并发点时区分行）
+                "dataset": f"{run_dir.name}@c{summary.get('Concurrency')}",
+                "concurrency": summary.get("Concurrency"),
+                "total_requests": int(total_req) if total_req else 0,
+                "success_requests": int(success_req) if success_req else 0,
+                "failed_requests": int(summary.get("Failed Requests", 0) or 0),
+                "success_rate_f": success_rate_f,
+                "stats": {
+                    "avg_prompt_tokens": summary.get("Avg Input Tokens"),
+                    "avg_output_tokens": summary.get("Avg Output Tokens"),
+                    "ttfb": {
+                        "avg": avg_ttft_s,
+                        "p50": p50_ttft_s if p50_ttft_s is not None else avg_ttft_s,
+                        "p90": p90_ttft_s if p90_ttft_s is not None else avg_ttft_s,
+                    },
+                    "token_rates": {"avg": token_rate},
+                    "tpm": tpm_val,
                 },
-                "token_rates": {"avg": token_rate},
-                "tpm": tpm_val,
-            },
-            # 原始 evalscope 数据，便于上层报告引用
-            "_evalscope_summary_path": str(bench_summary),
-        })
+                # 原始 evalscope 数据，便于上层报告引用
+                "_evalscope_summary_path": str(bench_summary),
+            })
 
     return {
         "schema": "matrix_aggregated/v1+evalscope_adapter",

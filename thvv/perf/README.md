@@ -12,7 +12,7 @@
 ## 目录结构
 
 ```
-├── run.sh                        # 一键入口（check / bench / bench-all / report）
+├── run.sh                        # 一键入口（check / bench / bench-all / sla-tune / sla-tune-all / report）
 ├── requirements.txt              # Python 依赖（evalscope[perf]>=0.13.0）
 ├── datasets/                     # 内置压测数据集（10 个）
 │   ├── perf_zh_1k.jsonl          # ~1k  tokens 中文对话
@@ -27,11 +27,12 @@
 │   └── perf_zh_9k_mix50.jsonl    # 50% 前缀缓存混合
 ├── references/                   # 性能测试报告模板.xlsx
 ├── scripts/
-│   ├── setup_tokenizer.py        # 下载/校验 tokenizer（bench / bench-all / check 启动前自动调用）
+│   ├── setup_tokenizer.py        # 下载/校验 tokenizer（bench / bench-all / sla-tune / check 启动前自动调用）
 │   ├── gen_perf_dashboard.py     # HTML 报告唯一出口：性能测试报告.html
 │   ├── gen_report_from_db.py     # 38 列 Excel 指标报告：性能测试报告.xlsx
 │   ├── export_failure_details.py # （手动工具）失败请求 CSV 导出
-│   └── sla_eval.py               # （手动工具）SLA 验收评估：TTFT P50/P90 分档阈值 + 吞吐下限判定
+│   └── sla_eval.py               # SLA 验收评估：TTFT 双阈值（avg 对标 p50 / p90 分位）分档判定；
+│                                  # sla-tune 跑完自动调用复判，也可手动运行
 └── results/                      # 压测产物（自动创建，已由 .gitignore 排除）
 ```
 
@@ -118,6 +119,42 @@ bash run.sh bench 128k 500 128
 > 启动后进程在后台运行，会打印 PID 和日志路径。
 > 使用 `tail -f results/perf-*-*/run.log` 跟踪进度。
 
+### 5.5 SLA 并发上限探索（`sla-tune`）
+
+用 evalscope `--sla-auto-tune` 在 `[SLA_LOWER_BOUND, SLA_UPPER_BOUND]`（默认 1~256）内**二分搜索满足 SLA 的最大并发**，
+替代固定 `CONCURRENCY_LADDER` 梯度。SLA 约束按 bucket 自动映射 `scripts/sla_eval.py` 的 TIERS 双阈值
+（`avg_ttft` 对标 p50 阈值 + `p90_ttft` 对标 p90 阈值 + `avg_tpot<=33ms`≈OTPS≥30 t/s；成功率 100% 为内置硬门槛；
+**注意：evalscope sla-params 的 TTFT/TPOT 指标单位为毫秒**）：
+
+| bucket | SLA 约束（毫秒） |
+|------|------|
+| 1k | `avg_ttft<=2000, p90_ttft<=5000` |
+| 9k / 16k | `avg_ttft<=4000, p90_ttft<=8000` |
+| 32k | `avg_ttft<=8000, p90_ttft<=15000` |
+| 64k | `avg_ttft<=15000, p90_ttft<=35000` |
+| 128k / 200k | `avg_ttft<=30000, p90_ttft<=70000` |
+
+```bash
+# 单档探索（32k 档）
+bash run.sh sla-tune 32k
+
+# 全档位探索（档间冷却 SLA_COOLDOWN=120s）
+bash run.sh sla-tune-all
+
+# 常用覆盖：搜索上界 / 每点重复次数 / 每点请求数倍率 / 自定义约束 / 只打印命令
+SLA_UPPER_BOUND=128 SLA_NUM_RUNS=2 SLA_NUMBER_MULTIPLIER=8 bash run.sh sla-tune 16k
+SLA_PARAMS='[{"avg_ttft": "<=1000"}]' bash run.sh sla-tune 1k
+DRY_RUN=1 bash run.sh sla-tune 32k
+
+# 临时切换端点（外部环境变量优先于 configs/.env）
+API_URL=http://10.24.8.11:30809/v1/chat/completions bash run.sh sla-tune 1k
+```
+
+说明：
+- 每个并发点请求数 = 并发 × `SLA_NUMBER_MULTIPLIER`（默认 8）；点数约 log2(上界-下界)，总耗时 = 点数 × 每点时长 × `SLA_NUM_RUNS`；
+- auto-tune 多点复用同一数据集，如需严格零 cache 命中口径建议 `NONCE=1` 且保证数据集行数 ≥ 最大请求数；
+- 跑完自动执行 `sla_eval.py` SLA 复判 + `gen_perf_dashboard.py` 报告（产物在 `results/sla-tune-<bucket>-<ts>/`，全档位汇总在 `results/_sla_group_<ts>/`）。
+
 ### 6. 报告
 
 `bench` / `bench-all` 跑完会**自动生成**两份报告（HTML 阅读版 + xlsx 指标版），无需手动操作；路径见下方常见问题。
@@ -128,9 +165,10 @@ bash run.sh bench 128k 500 128
 # HTML 报告（参数透传 gen_perf_dashboard.py）
 bash run.sh report --run-dir results/perf-<bucket>-<ts> --model "模型名"
 
-# Excel 指标报告（--client 用于报告署名，也可用环境变量 CLIENT）
-python3 scripts/gen_report_from_db.py --results-dir results --client "供应商名称" \
-    --out results/性能测试报告.xlsx
+# Excel 指标报告（基于 references/性能测试报告模板.xlsx 填充，3 Sheets）
+python3 scripts/gen_report_from_db.py --results-dir results \
+    --vendor "供应商名称" --model "模型名" \
+    --out results/性能测试报告_<vendor>_<model>_<ts>.xlsx
 ```
 
 ---
@@ -152,16 +190,22 @@ python3 scripts/gen_report_from_db.py --results-dir results --client "供应商�
                   TTFT / TTLT（不提取 Request ID，与效果评测口径一致）
 ```
 
-**`性能测试报告.xlsx`**（指标交付版，`gen_report_from_db.py` 生成）：
+**`性能测试报告_{vendor}_{model}_{timestamp}.xlsx`**（指标交付版，`gen_report_from_db.py` 生成，基于模板填充）：
 
 ```
-性能指标 sheet：客户端 / 数据集 / 并发数 / 总请求数 / 成功数 / 失败数 / 成功率
+矩阵压测汇总 sheet（40 列 = 2 元数据 + 38 指标，按输入长度 1k → 200k 升序）：
+  供应商名称 / 模型名称 / 数据集 / 并发数 / 总请求数 / 成功数 / 失败数 / 成功率
   TTFT：Avg / Min / Max / P50 / P90 / P95 / P99（首 token 时延，秒）
   TTLT：Avg / P50 / P90 / P95 / P99（总时延，秒）
   Rate：Avg / P50 / P90 / P95 / P99（生成速率，tokens/s）
-  ITL：Avg / P50 / P90 / P95 / P99（token 间隔，秒）
+  TPOT：Avg / P50 / P90 / P95 / P99（每输出 token 时延，ms）
   Token：Avg Prompt / Avg Completion / Total Tokens
   吞吐：Output TPM / Output TPS / Input TPM / TPM
+失败请求详情 sheet（14 列）：逐条失败请求，API Key 脱敏 + 长文本 2000 字符截断
+模板说明 sheet：模板版本与使用说明
+染色：成功率 =100% 绿 / ≥95% 黄 / <95% 红；SLA 超阈值（Avg TTFT / P90 TTFT /
+  Avg Rate ≤ 30 t/s / TPM 超配额）红底白字加粗
+```
 ```
 
 > 失败请求的逐条明细只在 HTML 报告第四章「失败请求明细」中呈现，xlsx 不再包含该 sheet。
@@ -221,6 +265,13 @@ bash run.sh report --run-dir results/perf-<bucket>-<ts> --model "模型名"
 # 全档位组目录：
 bash run.sh report --run-dir results/_group_<ts> --model "模型名"
 ```
+
+**Q: `sla-tune` 的产物在哪？**
+
+- **单档** (`sla-tune`)：`results/sla-tune-<bucket>-<ts>/`（run.log + evalscope auto-tune 产物 + `sla_evaluation.json` SLA 复判 + HTML 报告）
+- **全档位** (`sla-tune-all`)：汇总在 `results/_sla_group_<ts>/`（组目录内软链各档结果 + 汇总 `sla_evaluation.json` + 汇总 HTML）
+
+二分探索的每个并发点结果、最终满足 SLA 的最大并发，见 run.log 中 evalscope 输出的 `SLA Auto-tune Summary` 表。
 
 **Q: 如何只保留部分数据集以减小包体积？**
 
