@@ -10,10 +10,12 @@
   thvv check
   thvv install
 
-配置方式（优先级: CLI 参数 > 环境变量 > .env 文件）:
+配置方式（优先级: CLI 参数 > 环境变量 > --env 选中的命名配置 > configs/.env）:
   1. thvv/configs/.env  — 写入 API_URL / API_KEY / MODEL_NAME / TOKENIZER / PROTOCOL
-  2. 环境变量            — export API_URL=... API_KEY=... MODEL_NAME=...
-  3. CLI 参数            — (perf/eval 参数经由 quickstart.sh 透传)
+  2. 命名配置            — thvv/configs/env.d/<name>.env，运行时 --env <name> 选择
+  3. 环境变量            — export API_URL=... API_KEY=... MODEL_NAME=...
+  4. CLI 端点直传        — perf/eval 子命令直接 --url/--api-key/--model/--protocol/
+                          --tokenizer/--provider/--judge-api-key 覆盖
 """
 from __future__ import annotations
 
@@ -92,6 +94,16 @@ def _check() -> int:
         if example.exists():
             print(f"    请运行: cp {example} {env_file}")
 
+    # 命名 env 配置（--env <name> 选择）
+    envd = _PKG_DIR / "configs" / "env.d"
+    names = sorted(p.stem for p in envd.glob("*.env")) if envd.exists() else []
+    names += sorted(p.name[len(".env."):] for p in (_PKG_DIR / "configs").glob(".env.*"))
+    names = sorted(set(names))
+    if names:
+        print(f"  命名 env: ✓ {', '.join(names)}（--env <name> 选择）")
+    else:
+        print("  命名 env: — 无（多模型测试可新建 configs/env.d/<name>.env）")
+
     # 环境变量
     print("\n--- 环境变量 ---")
     for var in ("API_URL", "API_KEY", "MODEL_NAME", "PROTOCOL", "TOKENIZER"):
@@ -123,8 +135,10 @@ Commands:
   check    环境检查
   install  安装依赖
 
-配置（优先级: CLI 参数 > 环境变量 > .env 文件）:
+配置（优先级: CLI 参数 > 环境变量 > --env 命名配置 > .env 文件）:
   cp thvv/configs/env.example thvv/configs/.env
+  # 或多模型命名配置: configs/env.d/<name>.env + perf/eval 命令上 --env <name>
+  # 或直接覆盖: --url/--api-key/--model/--protocol/--tokenizer/--provider/--judge-api-key
   # 或 export API_URL=... API_KEY=... MODEL_NAME=...
 """)
     return 0

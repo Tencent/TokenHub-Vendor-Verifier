@@ -33,7 +33,7 @@
 | `longbench_v2` | LongBench v2 长上下文 | 1 | ❌ | ❌ |
 | `live_code_bench` | LiveCodeBench 代码生成 | 1 | ❌ | ✅ |
 | `swe_bench_verified_mini_agentic` | SWE-Bench Agentic | 1 | ❌ | ✅ |
-| `swe_bench_pro` | SWE-Bench Pro | 1 | ❌ | ✅ |
+| `swe_bench_pro` | SWE-Bench Pro（实例镜像过多，酌情测试） | 1 | ❌ | ✅ |
 
 ---
 
@@ -118,6 +118,65 @@ JUDGE_API_KEY=sk-xxx
 - `judge_base_url` 是 Judge 模型的 **OpenAI 兼容 base URL**（不含 `/chat/completions`），与被测模型的 `API_URL` 相互独立——即 Judge 可用其他供应商的模型
 - 可选 `--judge_strategy`（`rule` / `llm` / `llm_recall` / `auto`），hle 与 simple_qa 默认已是 `llm`，一般无需指定
 - 缺省时报错示例：`--judge_model（LLM Judge 需要）不能为空`
+
+### 6. 代码类评测（live_code_bench / swe_bench_verified_mini_agentic）
+
+#### 前置依赖
+
+```bash
+pip install 'evalscope[swe_bench]'   # = swebench==4.1.0
+pip install 'evalscope[sandbox]'     # = ms-enclave（SWE Agent 容器沙箱）
+
+# Docker daemon 可用；非 root 用户需加入 docker 组（否则预检查报"未检测到可用的 Docker daemon"）
+sudo usermod -aG docker $USER && newgrp docker
+```
+
+swe_bench_verified_mini_agentic 需要预置 50 个实例镜像（每题一个，约 22GB，层共享后）：
+镜像名规则 `swebench/sweb.eval.x86_64.<instance_id>.latest`（`instance_id` 中 `__` 替换为 `_1776_`，如 `django__django-11790` → `swebench/sweb.eval.x86_64.django_1776_django-11790:latest`）。批量预拉：
+
+```bash
+python3 - <<'EOF' > pull_sweb.sh
+from modelscope import MsDataset
+ds = MsDataset.load('evalscope/swe-bench-verified-mini', split='test')
+for iid in ds['instance_id']:
+    print('docker pull swebench/sweb.eval.x86_64.%s:latest' % iid.replace('__', '_1776_'))
+EOF
+bash pull_sweb.sh
+```
+
+> 国内拉取：Docker Hub 直连不通，`/etc/docker/daemon.json` 配 `registry-mirrors`（实测可用 `https://docker.1ms.run`，覆盖 swebench 冷门镜像；阿里云专属加速器仅限 ECS 内且只放行白名单镜像）。也可经 GitHub Action 中转到阿里云 ACR 再拉取（注意 ACR 镜像名会丢掉 `swebench/` 前缀，拉完必须 `docker tag` 回原名，否则评测引擎识别不到本地镜像）。
+
+#### 实测命令（glm-5.3-flash @ 内网端点）
+
+```bash
+# LIVE-CODE-BENCH（release_latest 共 1055 题，16 并发，实测约 4h15m）
+bash quickstart.sh eval bench live_code_bench \
+  --model_name glm-5.3-flash \
+  --base_url http://10.24.8.100:30809/v1 \
+  --api_key <API_KEY> \
+  --eval_batch_size 16 \
+  --live_code_bench_subset release_latest \
+  --output_dir glm53flash-100-lcb-full
+
+# SWE-bench Verified Mini Agentic（50 题，4 并发 Agent，实测约 3h）
+bash quickstart.sh eval bench swe_bench_verified_mini_agentic \
+  --model_name glm-5.3-flash \
+  --base_url http://10.24.8.100:30809/v1 \
+  --api_key <API_KEY> \
+  --eval_batch_size 4 \
+  --output_dir glm53flash-100-swe-full
+```
+
+长跑建议后台执行：`nohup bash quickstart.sh eval bench ... > /tmp/xxx.log 2>&1 &`
+
+#### 关键注意
+
+- **`--live_code_bench_subset release_latest` 必须指定**：否则 evalscope 会遍历全部 29 个 subset（release_v1~v6 及各种组合，题目大量重叠），耗时成倍且口径错误
+- **并发建议**：live_code_bench 单轮生成可开 16+（看端点吞吐）；swe_bench_verified_mini_agentic 每个并发独占一个 Docker 容器跑多轮 Agent（250 步上限），建议 4（激进可 8，注意 `docker ps` 容器数与 CPU）
+- **SWE 长尾题**：单题 Agent 可磨 30-60 分钟（模型反复试错到步数上限），进度条长时间不动属正常，看 `docker ps` 容器仍在轮转即未卡死
+- **live_code_bench 为本地进程执行模型生成的代码**（未启用沙箱），评测机会执行模型产出的任意 Python 代码，注意运行环境隔离
+- 冒烟：`--limit 5`（LCB）/ `--limit 2`（SWE），链路通了再去掉全量
+- 全量基准参考（glm-5.3-flash）：LiveCodeBench 89.29 / SWE-bench Verified Mini Agentic 88.00
 
 ---
 

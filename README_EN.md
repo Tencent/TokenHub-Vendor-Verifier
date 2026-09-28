@@ -73,7 +73,7 @@ bash quickstart.sh install
 ### 3. Performance Load Testing
 
 ```bash
-bash quickstart.sh perf bench 1k 20 200      # Single bucket: <bucket> [requests] [concurrency]
+bash quickstart.sh perf bench 1k 200 20      # Single bucket: <bucket> [requests] [concurrency]
 bash quickstart.sh perf bench-all            # All buckets × concurrency ladders (configurable via BUCKETS / CONCURRENCY_LADDER etc.)
 bash quickstart.sh perf report               # Regenerate report from results/
 ```

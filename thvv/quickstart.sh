@@ -5,11 +5,13 @@
 # 用法：
 #   bash quickstart.sh check                    # 环境检查
 #   bash quickstart.sh install                  # 安装依赖
-#   bash quickstart.sh perf bench <bucket> [N] [P]  # 单档压测
+#   bash quickstart.sh perf bench <bucket> [请求数N] [并发P]  # 单档压测（N 默认 500，P 默认 10）
 #   bash quickstart.sh perf bench-all           # 全档位 × 并发梯度压测
 #   bash quickstart.sh perf report              # 生成报告
 #   bash quickstart.sh eval bench <datasets>    # 效果评测
 #   bash quickstart.sh eval list                # 列出支持的数据集
+#   bash quickstart.sh perf bench 16k 500 10 --env glm53   # 用 configs/env.d/glm53.env 切换模型
+#   bash quickstart.sh eval bench aime26 --model X --url Y --api-key Z   # 端点参数直传（无需 .env）
 #
 # 协议（在 configs/.env 中设置 PROTOCOL，或命令行 export）：
 #   PROTOCOL=openai      → OpenAI Chat Completions
@@ -19,6 +21,9 @@ set -euo pipefail
 
 KIT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$KIT_DIR"
+
+# ---- 公共参数解析（--env 命名配置选择 + --url/--model 等端点参数直传）----
+source "$KIT_DIR/lib/params.sh"
 
 # ---- 颜色 ----
 RED='\033[0;31m'
@@ -106,7 +111,7 @@ cmd_check() {
     echo -e "${BLUE}--- 配置检查 ---${NC}"
     if [[ -f configs/.env ]]; then
         echo -e "  configs/.env: ${GREEN}已配置${NC}"
-        source configs/.env 2>/dev/null || true
+        source <(sed '1s/^\xEF\xBB\xBF//; s/\r$//' configs/.env) 2>/dev/null || true
         [[ -n "${API_URL:-}" ]] && echo -e "    API_URL: ${GREEN}已设置${NC}" || echo -e "    API_URL: ${RED}未设置${NC}"
         [[ -n "${API_KEY:-}" ]] && echo -e "    API_KEY: ${GREEN}已设置${NC}" || echo -e "    API_KEY: ${RED}未设置${NC}"
         [[ -n "${MODEL_NAME:-}" ]] && echo -e "    MODEL_NAME: ${GREEN}已设置${NC}" || echo -e "    MODEL_NAME: ${RED}未设置${NC}"
@@ -120,7 +125,25 @@ cmd_check() {
         echo -e "  configs/.env: ${YELLOW}未配置${NC}"
         echo -e "  请运行: ${BLUE}cp configs/env.example configs/.env${NC} 并填写你的 API 信息"
     fi
-    
+
+    echo ""
+    echo -e "${BLUE}--- 命名 env 配置（--env <name> 选择）---${NC}"
+    local _e
+    local -a _envs=()
+    for _e in configs/env.d/*.env; do
+        [[ -f "$_e" ]] || continue
+        _envs+=("$(basename "${_e%.env}")")
+    done
+    for _e in configs/.env.*; do
+        [[ -f "$_e" ]] || continue
+        _envs+=("$(basename "$_e" | sed 's/^\.env\.//')")
+    done
+    if [[ ${#_envs[@]} -gt 0 ]]; then
+        echo -e "  可用: ${GREEN}${_envs[*]}${NC}"
+    else
+        echo -e "  ${YELLOW}无（多模型测试可在 configs/env.d/ 下新建 <name>.env）${NC}"
+    fi
+
     echo ""
     echo -e "${BLUE}--- 数据集检查 ---${NC}"
     if [[ -d perf/datasets ]]; then
@@ -151,10 +174,11 @@ cmd_perf() {
         echo -e "${RED}perf/run.sh 不存在${NC}"
         return 1
     fi
-    # 优先从 configs/.env 加载，不存在时用环境变量
-    if [[ -f configs/.env ]]; then
-        set -a; source configs/.env; set +a
-    fi
+    # 解析 THVV 专属参数（--env / --url / --model 等），其余透传给 perf/run.sh
+    thvv_parse_env_args "$KIT_DIR/configs" "$@" || return 1
+    # 加载 env 文件：--env 选中的命名配置，否则默认 configs/.env（外部环境变量优先）
+    thvv_load_env_file "${THVV_ENV_FILE:-$KIT_DIR/configs/.env}"
+    thvv_apply_overrides
     case "${PROTOCOL:-openai}" in
         openai|anthropic) ;;
         *)
@@ -164,7 +188,7 @@ cmd_perf() {
     esac
     ensure_requirements "$KIT_DIR/perf/requirements.txt" "性能压测"
     cd perf
-    bash run.sh "$@"
+    bash run.sh ${THVV_REST_ARGS[@]+"${THVV_REST_ARGS[@]}"}
 }
 
 # ---- 效果评测 ----
@@ -174,13 +198,14 @@ cmd_eval() {
         echo -e "${RED}eval/run.sh 不存在${NC}"
         return 1
     fi
+    # 解析 THVV 专属参数（--env / --url / --model 等），其余透传给 eval/run.sh
+    thvv_parse_env_args "$KIT_DIR/configs" "$@" || return 1
+    # 加载 env 文件：--env 选中的命名配置，否则默认 configs/.env（外部环境变量优先）
+    thvv_load_env_file "${THVV_ENV_FILE:-$KIT_DIR/configs/.env}"
+    thvv_apply_overrides
     ensure_requirements "$KIT_DIR/eval/requirements.txt" "效果评测"
-    # 优先从 configs/.env 加载，不存在时用环境变量
-    if [[ -f configs/.env ]]; then
-        set -a; source configs/.env; set +a
-    fi
     cd "$KIT_DIR/eval"
-    bash run.sh "$@"
+    bash run.sh ${THVV_REST_ARGS[@]+"${THVV_REST_ARGS[@]}"}
 }
 
 # ---- 主入口 ----
@@ -190,11 +215,14 @@ main() {
         echo "THVV — 用法:"
         echo "  bash quickstart.sh check                    环境检查"
         echo "  bash quickstart.sh install                  安装依赖"
-        echo "  bash quickstart.sh perf bench <bucket> [N] [P]  单档压测"
+        echo "  bash quickstart.sh perf bench <bucket> [请求数N] [并发P]  单档压测（默认 500 请求 / 10 并发）"
         echo "  bash quickstart.sh perf bench-all           全档位 × 并发梯度压测"
         echo "  bash quickstart.sh perf report              生成报告"
         echo "  bash quickstart.sh eval bench <datasets>    效果评测"
         echo "  bash quickstart.sh eval list                列出支持的数据集"
+        echo ""
+        echo "  端点直传: perf/eval 子命令可用 --env <name> 选择命名配置（configs/env.d/<name>.env）"
+        echo "            或直接 --url/--api-key/--model/--protocol/--tokenizer/--provider/--judge-api-key 覆盖"
         echo ""
         echo "协议: 在 configs/.env 中设置 PROTOCOL=openai 或 anthropic"
         exit 0
@@ -214,12 +242,15 @@ main() {
             echo "  check        环境检查"
             echo "  install      安装依赖"
             echo "  perf         进入性能压测（支持 openai / anthropic 协议）"
-            echo "    bench <bucket> [N] [P]   单档压测"
+            echo "    bench <bucket> [请求数N] [并发P]   单档压测（默认 500 请求 / 10 并发）"
             echo "    bench-all                全档位 × 并发梯度"
             echo "    report                   生成报告"
             echo "  eval         效果评测（11 个数据集：AIME/GPQA/HLE/MMLU-Pro/...）"
             echo "    bench <datasets>         单/多数据集评测（如 aime25,gpqa_diamond）"
             echo "    list                     列出支持的数据集"
+            echo ""
+            echo "  端点直传: perf/eval 子命令可用 --env <name> 选择命名配置（configs/env.d/<name>.env）"
+            echo "            或直接 --url/--api-key/--model/--protocol/--tokenizer/--provider/--judge-api-key 覆盖"
             echo ""
             echo "协议: 在 configs/.env 中设置 PROTOCOL=openai 或 anthropic"
             echo "  openai     → OpenAI Chat Completions"

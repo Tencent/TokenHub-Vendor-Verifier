@@ -9,7 +9,9 @@
 #
 # <datasets> = aime25,gpqa_diamond  或  all
 #
-# 配置：从上级 configs/.env 读取 API_URL / API_KEY / MODEL_NAME / PROTOCOL
+# 配置：从上级 configs/.env 读取 API_URL / API_KEY / MODEL_NAME / PROTOCOL；
+#   --env <name> 选择命名配置（configs/env.d/<name>.env），或直接
+#   --url/--api-key/--model/--protocol/--tokenizer/--provider/--judge-api-key 覆盖
 # ============================================================
 set -eu
 
@@ -18,15 +20,24 @@ cd "$KIT_DIR"
 
 ROOT_DIR="$(cd "$KIT_DIR/.." && pwd)"
 
-# ---- 加载 .env ----
+# ---- THVV 专属参数解析（--env / --url / --model 等，其余透传给子命令）----
+source "$ROOT_DIR/lib/params.sh"
+thvv_parse_env_args "$ROOT_DIR/configs" "$@"
+set -- ${THVV_REST_ARGS[@]+"${THVV_REST_ARGS[@]}"}
+
+# ---- 加载 .env（--env 选中的命名配置优先；外部环境变量优先于 env 文件）----
 load_env() {
-    if [[ -f "$ROOT_DIR/configs/.env" ]]; then
-        set -a; source "$ROOT_DIR/configs/.env"; set +a
-    else
+    local envfile="${THVV_ENV_FILE:-$ROOT_DIR/configs/.env}"
+    if [[ ! -f "$envfile" ]]; then
         echo "[warn] configs/.env 不存在，使用环境变量或默认值" >&2
+        return 0
     fi
+    thvv_load_env_file "$envfile"
 }
 load_env
+
+# CLI 直传覆盖（--url / --model 等）在 env 文件加载后生效（优先级最高）
+thvv_apply_overrides
 
 # 统一变量名
 API_URL="${API_URL:-}"
@@ -36,8 +47,8 @@ PROVIDER="${PROVIDER:-unknown}"
 
 # ---- 检测并安装缺失依赖 ----
 do_pip_install() {
-    python3 -m pip install -r requirements.txt -q --root-user-action=ignore --no-cache-dir || {
-        python3 -m pip install -r requirements.txt -q --force-reinstall --root-user-action=ignore --no-cache-dir || {
+    python3 -m pip install -r requirements.txt -q --no-cache-dir || {
+        python3 -m pip install -r requirements.txt -q --force-reinstall --no-cache-dir || {
             echo "[fail] 依赖安装失败，请手动执行: pip install -r requirements.txt"
             return 1
         }

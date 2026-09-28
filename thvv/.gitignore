@@ -7,11 +7,17 @@ venv/
 
 # Config (contains API keys)
 configs/.env
+configs/.env.*
+configs/env.d/*
+!configs/env.d/README.md
 
 # Benchmark results
 perf/results/
 eval/results/
 results/
+
+# 覆盖仓库根 .gitignore 的 lib/ 规则（本目录 lib/ 为源码，非构建产物）
+!lib/
 
 # Backup / temp files
 *.bak
