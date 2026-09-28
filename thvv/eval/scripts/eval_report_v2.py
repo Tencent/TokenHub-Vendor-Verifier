@@ -36,6 +36,202 @@ CSS = '\n* { box-sizing: border-box; }\nbody { font-family: -apple-system, Blink
 JS = '\nfunction toggleIssue(i) {\n  var row = document.getElementById(\'issue-detail-\' + i);\n  var trigger = row.previousElementSibling;\n  row.classList.toggle(\'show\'); trigger.classList.toggle(\'open\');\n}\nfunction toggleCard(el) { el.parentElement.classList.toggle(\'open\'); }\nfunction expandAll(flag) {\n  document.querySelectorAll(\'.task-card\').forEach(function(c) {\n    c.classList.toggle(\'open\', flag);\n  });\n}\nfunction filterCards() {\n  var kw = document.getElementById(\'q\').value.trim().toLowerCase();\n  document.querySelectorAll(\'.task-card\').forEach(function(c) {\n    var hay = (c.getAttribute(\'data-search\') || \'\').toLowerCase();\n    c.style.display = hay.indexOf(kw) >= 0 ? \'\' : \'none\';\n  });\n}\nfunction filterResult(flag, btn) {\n  document.querySelectorAll(\'.filter-btn\').forEach(function(b) { b.classList.remove(\'active\'); });\n  if (btn) btn.classList.add(\'active\');\n  document.querySelectorAll(\'tr.issue-row\').forEach(function(r) {\n    var show = (flag === \'all\' || r.getAttribute(\'data-result\') === flag);\n    r.style.display = show ? \'\' : \'none\';\n    var d = r.nextElementSibling;\n    if (d && d.classList.contains(\'issue-detail\')) { d.classList.remove(\'show\'); d.style.display = \'\'; }\n  });\n}\nvar issueFilterState = { result: \'all\', dataset: \'all\', query: \'\' };\nvar issueGroups = [];\n\nfunction toggleIssue(i) {\n  var detail = document.getElementById(\'issue-detail-\' + i);\n  if (!detail) return;\n  var trigger = detail.previousElementSibling;\n  var expanded = !detail.classList.contains(\'show\');\n  detail.classList.toggle(\'show\', expanded);\n  detail.style.display = expanded ? \'table-row\' : \'none\';\n  trigger.classList.toggle(\'open\', expanded);\n  trigger.setAttribute(\'aria-expanded\', String(expanded));\n}\n\nfunction parseMetric(value) {\n  var match = String(value || \'\').replace(/,/g, \'\').match(/-?\\d+(?:\\.\\d+)?/);\n  return match ? Number(match[0]) : null;\n}\n\nfunction averageMetric(runs, cellIndex) {\n  var values = runs.map(function(run) { return parseMetric(run.row.cells[cellIndex].textContent); })\n    .filter(function(value) { return value !== null && Number.isFinite(value); });\n  if (!values.length) return null;\n  return values.reduce(function(total, value) { return total + value; }, 0) / values.length;\n}\n\nfunction formatAverage(value, type) {\n  if (value === null) return \'—\';\n  if (type === \'integer\') return Math.round(value).toLocaleString(\'zh-CN\');\n  if (type === \'seconds\') return value.toFixed(2) + \'s\';\n  return value.toFixed(1);\n}\n\nfunction getDataset(detail) {\n  var code = detail.querySelector(\'td > .meta code\');\n  if (code) return code.textContent.replace(\'tau2_bench_\', \'\').trim().toLowerCase();\n  var labels = detail.querySelectorAll(\'.task-meta .k\');\n  for (var i = 0; i < labels.length; i += 1) {\n    if (labels[i].textContent.indexOf(\'数据集\') >= 0) {\n      var value = labels[i].parentElement.querySelector(\'.v\');\n      return value ? value.textContent.trim().toLowerCase() : \'\';\n    }\n  }\n  return \'\';\n}\n\nfunction datasetLabel(dataset) {\n  return { airline: \'航空 Airline\', retail: \'零售 Retail\', telecom: \'通信 Telecom\' }[dataset] || dataset;\n}\n\nfunction groupCode(dataset, index) {\n  var prefix = { airline: \'A\', retail: \'R\', telecom: \'T\' }[dataset] || \'Q\';\n  return prefix + \'-\' + String(index + 1).padStart(3, \'0\');\n}\n\nfunction aggregateResult(runs) {\n  var counts = { pass: 0, fail: 0, skip: 0, score: 0 };\n  runs.forEach(function(run) { counts[run.result] = (counts[run.result] || 0) + 1; });\n  var result = \'score\';\n  if (counts.skip) result = \'skip\';\n  else if (counts.fail) result = \'fail\';\n  else if (counts.pass === runs.length) result = \'pass\';\n  var parts = [];\n  if (counts.pass) parts.push(\'<span class="agg-part pass">\' + counts.pass + \'通过</span>\');\n  if (counts.fail) parts.push(\'<span class="agg-part fail">\' + counts.fail + \'失败</span>\');\n  if (counts.score) parts.push(\'<span class="agg-part score">\' + counts.score + \'轮得分</span>\');\n  if (counts.skip) parts.push(\'<span class="agg-part skip">\' + counts.skip + \'异常</span>\');\n  return {\n    result: result,\n    html: \'<span class="aggregate-badge \' + result + \'">\' + parts.join(\' \') + \'</span>\',\n    counts: counts\n  };\n}\n\n\nfunction setGroupExpanded(group, expanded) {\n  group.expanded = expanded;\n  group.parent.classList.toggle(\'open\', expanded);\n  group.parent.setAttribute(\'aria-expanded\', String(expanded));\n  group.runs.forEach(function(run) {\n    run.row.style.display = expanded ? \'table-row\' : \'none\';\n    if (!expanded) {\n      run.detail.classList.remove(\'show\');\n      run.detail.style.display = \'none\';\n      run.row.classList.remove(\'open\');\n      run.row.setAttribute(\'aria-expanded\', \'false\');\n    } else {\n      run.detail.style.display = run.detail.classList.contains(\'show\') ? \'table-row\' : \'none\';\n    }\n  });\n}\n\nfunction toggleGroup(key) {\n  var group = issueGroups.find(function(item) { return item.key === key; });\n  if (group) setGroupExpanded(group, !group.expanded);\n}\n\nvar issueReps = 1;\n\nfunction escapeHtml(text) {\n  return String(text).replace(/&/g, \'&amp;\').replace(/</g, \'&lt;\').replace(/>/g, \'&gt;\');\n}\n\nfunction escapeAttr(text) {\n  return escapeHtml(text).replace(/"/g, \'&quot;\');\n}\n\nfunction initializeIssueGroups() {\n  var table = document.querySelector(\'table.issue-summary\');\n  if (!table) return;\n  issueReps = Number(table.getAttribute(\'data-reps\')) || 1;\n  var colCount = table.tHead && table.tHead.rows[0] ? table.tHead.rows[0].cells.length : 0;\n  if (issueReps <= 1) {\n    // 单轮执行：保留静态行（列数与表头一致），筛选由 applyIssueFilters 按行处理\n    issueGroups = [];\n    return;\n  }\n  var tbody = table.tBodies[0];\n  var rows = Array.from(tbody.querySelectorAll(\'tr.issue-row\'));\n  var groupsByKey = new Map();\n\n  rows.forEach(function(row) {\n    var detail = row.nextElementSibling;\n    if (!detail || !detail.classList.contains(\'issue-detail\')) return;\n    var sampleText = row.cells[0].textContent.trim();\n    var sampleId = Number(sampleText.replace(/^S/, \'\'));\n    if (!Number.isFinite(sampleId)) sampleId = 0;\n    var dataset = row.getAttribute(\'data-dataset\') || getDataset(detail);\n    var taskIndex = Math.floor(sampleId / issueReps);\n    var key = dataset + \'-\' + taskIndex;\n    var titleNode = row.querySelector(\'.case-title\');\n    var title = titleNode ? titleNode.textContent.trim() : row.cells[1].textContent.trim();\n    var group = groupsByKey.get(key);\n    if (!group) {\n      group = { key: key, dataset: dataset, taskIndex: taskIndex, title: title, runs: [], expanded: false };\n      groupsByKey.set(key, group);\n    }\n    group.runs.push({\n      row: row,\n      detail: detail,\n      sampleId: sampleId,\n      repeat: sampleId % issueReps,\n      result: row.getAttribute(\'data-result\') || \'unknown\'\n    });\n  });\n\n  issueGroups = Array.from(groupsByKey.values()).sort(function(a, b) {\n    return String(a.dataset).localeCompare(String(b.dataset)) || (a.taskIndex - b.taskIndex);\n  });\n\n  var perfTypes = [\'decimal\', \'seconds\', \'integer\', \'integer\', \'decimal\', \'seconds\'];\n  var fragment = document.createDocumentFragment();\n  issueGroups.forEach(function(group) {\n    group.runs.sort(function(a, b) { return a.repeat - b.repeat; });\n    var aggregate = aggregateResult(group.runs);\n    group.result = aggregate.result;\n    group.queryText = (groupCode(group.dataset, group.taskIndex) + \' \' + group.title).toLowerCase();\n\n    var parent = document.createElement(\'tr\');\n    parent.className = \'case-group-row\';\n    parent.setAttribute(\'data-result\', group.result);\n    parent.setAttribute(\'data-dataset\', group.dataset);\n    parent.setAttribute(\'tabindex\', \'0\');\n    parent.setAttribute(\'role\', \'button\');\n    parent.setAttribute(\'aria-expanded\', \'false\');\n    parent.onclick = function() { toggleGroup(group.key); };\n    parent.onkeydown = function(event) {\n      if (event.key === \'Enter\' || event.key === \' \') { event.preventDefault(); toggleGroup(group.key); }\n    };\n\n    var executed = group.runs.filter(function(run) { return run.result !== \'skip\'; }).length;\n    // 父行列数与表头严格一致：题号 | 题目 | 执行结果(聚合徽章) | (有 perf 时) 6 列均值\n    var parentHtml =\n      \'<td class="num"><span class="group-index">\' + groupCode(group.dataset, group.taskIndex) + \'</span></td>\' +\n      \'<td><div class="group-name"><span class="group-caret group-caret-\' + aggregate.result + \'">▶</span><div class="group-title-wrap"><div class="group-title" title="\' + escapeAttr(group.title) + \'">\' + escapeHtml(group.title) + \'</div><div class="group-meta">\' + escapeHtml(datasetLabel(group.dataset)) + \' · 共执行 \' + group.runs.length + \' 轮 · \' + executed + \' 轮有效</div></div></div></td>\' +\n      \'<td class="num group-result">\' + aggregate.html + \'</td>\';\n    if (colCount > 3) {\n      for (var ci = 3; ci < colCount && ci - 3 < perfTypes.length; ci += 1) {\n        parentHtml += \'<td class="num" title="有效轮次平均">\' + formatAverage(averageMetric(group.runs, ci), perfTypes[ci - 3]) + \'</td>\';\n      }\n    }\n    parent.innerHTML = parentHtml;\n    group.parent = parent;\n    fragment.appendChild(parent);\n\n    group.runs.forEach(function(run) {\n      run.row.classList.add(\'group-run\');\n      run.row.setAttribute(\'data-dataset\', group.dataset);\n      run.row.setAttribute(\'data-group\', group.key);\n      run.row.setAttribute(\'tabindex\', \'0\');\n      run.row.setAttribute(\'role\', \'button\');\n      run.row.setAttribute(\'aria-expanded\', \'false\');\n      run.row.cells[0].innerHTML = \'<span class="run-sample">第\' + (run.repeat + 1) + \'轮</span>\';\n      run.row.cells[1].innerHTML = \'<div class="run-name"><span class="caret">▶</span><span>执行明细</span></div>\';\n      var resultBadge = run.row.cells[2].querySelector(\'.badge\');\n      if (resultBadge) {\n        var label = { pass: \'通过\', fail: \'失败\', skip: \'异常\' }[run.result];\n        if (label) resultBadge.textContent = label;\n      }\n      run.row.style.display = \'none\';\n      run.detail.cells[0].colSpan = colCount;\n      run.detail.classList.add(\'group-detail\');\n      run.detail.setAttribute(\'data-group\', group.key);\n      run.detail.style.display = \'none\';\n      run.row.addEventListener(\'keydown\', function(event) {\n        if (event.key === \'Enter\' || event.key === \' \') { event.preventDefault(); run.row.click(); }\n      });\n      fragment.appendChild(run.row);\n      fragment.appendChild(run.detail);\n    });\n  });\n  tbody.replaceChildren(fragment);\n}\n\n\nfunction applyIssueFilters() {\n  var visible = 0;\n  var total = 0;\n  if (issueGroups.length) {\n    total = issueGroups.length;\n    issueGroups.forEach(function(group) {\n      var resultMatch = issueFilterState.result === \'all\' || group.result === issueFilterState.result;\n      var datasetMatch = issueFilterState.dataset === \'all\' || group.dataset === issueFilterState.dataset;\n      var queryMatch = !issueFilterState.query || group.queryText.indexOf(issueFilterState.query) >= 0;\n      var show = resultMatch && datasetMatch && queryMatch;\n      group.parent.style.display = show ? \'table-row\' : \'none\';\n      if (!show) setGroupExpanded(group, false);\n      if (show) visible += 1;\n    });\n  } else {\n    document.querySelectorAll(\'table.issue-summary tr.issue-row\').forEach(function(row) {\n      total += 1;\n      var result = row.getAttribute(\'data-result\') || \'\';\n      var dataset = row.getAttribute(\'data-dataset\') || \'\';\n      var queryText = (((row.cells[0] || {}).textContent || \'\') + \' \' + ((row.cells[1] || {}).textContent || \'\')).toLowerCase();\n      var show = (issueFilterState.result === \'all\' || result === issueFilterState.result)\n        && (issueFilterState.dataset === \'all\' || dataset === issueFilterState.dataset)\n        && (!issueFilterState.query || queryText.indexOf(issueFilterState.query) >= 0);\n      row.style.display = show ? \'\' : \'none\';\n      if (!show) {\n        var detail = row.nextElementSibling;\n        if (detail && detail.classList.contains(\'issue-detail\')) {\n          detail.classList.remove(\'show\');\n          detail.style.display = \'none\';\n          row.classList.remove(\'open\');\n        }\n      }\n      if (show) visible += 1;\n    });\n  }\n  var count = document.getElementById(\'issueCount\');\n  if (count) {\n    var text = \'显示 \' + visible.toLocaleString(\'zh-CN\') + \' / \' + total.toLocaleString(\'zh-CN\') + \' 道题\';\n    if (issueGroups.length && issueReps > 1) text += \' · \' + (visible * issueReps).toLocaleString(\'zh-CN\') + \' 轮\';\n    count.textContent = text;\n  }\n  var empty = document.getElementById(\'issueEmpty\');\n  if (empty) empty.style.display = visible ? \'none\' : \'block\';\n}\n\n\nfunction filterResult(flag, btn) {\n  issueFilterState.result = flag;\n  document.querySelectorAll(\'.result-filter\').forEach(function(button) { button.classList.remove(\'active\'); });\n  if (btn) btn.classList.add(\'active\');\n  applyIssueFilters();\n}\n\nfunction filterIssues() {\n  var input = document.getElementById(\'issueSearch\');\n  issueFilterState.query = input ? input.value.trim().toLowerCase() : \'\';\n  applyIssueFilters();\n}\n\nfunction filterDataset() {\n  var select = document.getElementById(\'datasetFilter\');\n  issueFilterState.dataset = select ? select.value : \'all\';\n  applyIssueFilters();\n}\n\nfunction collapseIssues() {\n  if (issueGroups.length) {\n    issueGroups.forEach(function(group) { setGroupExpanded(group, false); });\n    return;\n  }\n  document.querySelectorAll(\'table.issue-summary tr.issue-row.open\').forEach(function(row) { row.classList.remove(\'open\'); });\n  document.querySelectorAll(\'table.issue-summary tr.issue-detail.show\').forEach(function(detail) {\n    detail.classList.remove(\'show\');\n    detail.style.display = \'none\';\n  });\n}\n\n\ndocument.addEventListener(\'DOMContentLoaded\', function() {\n  initializeIssueGroups();\n  applyIssueFilters();\n  var backToTop = document.getElementById(\'backToTop\');\n  window.addEventListener(\'scroll\', function() {\n    if (backToTop) backToTop.classList.toggle(\'show\', window.scrollY > 700);\n  }, { passive: true });\n});\n'
 
 
+# ==================== 验收标准对比 ====================
+
+# 验收基线数据（源：thvv/eval/效果验收标准.xlsx，由维护流程同步生成）。
+# 缺失该文件时降级为「不出验收对比章节」，不阻断报告生成。
+ACCEPTANCE_PATH = Path(__file__).resolve().parent / 'acceptance_data.json'
+_acceptance_cache = None
+
+ACCEPTANCE_CSS = (
+    '\n.acc-note { color: #64748b; font-size: 12.5px; margin: 2px 0 12px; }'
+    '\n.acc-verdict-pass { color: #16a34a; font-weight: 700; }'
+    '\n.acc-verdict-boundary { color: #d97706; font-weight: 700; }'
+    '\n.acc-verdict-fail { color: #dc2626; font-weight: 700; }'
+    '\n.acc-verdict-exceed { color: #2563eb; font-weight: 700; }'
+    '\n.acc-verdict-na { color: #94a3b8; }'
+    '\n.acc-diff-pos { color: #16a34a; font-weight: 600; }'
+    '\n.acc-diff-neg { color: #dc2626; font-weight: 600; }'
+)
+
+
+def load_acceptance():
+    """加载验收基线 JSON（模块级缓存），失败返回 None。"""
+    global _acceptance_cache
+    if _acceptance_cache is not None:
+        return _acceptance_cache
+    try:
+        _acceptance_cache = json.loads(ACCEPTANCE_PATH.read_text(encoding='utf-8'))
+    except Exception:
+        _acceptance_cache = None
+    return _acceptance_cache
+
+
+def _norm_model_key(s):
+    """模型名归一化：小写 + 去掉空格/横杠/下划线/点（无视大小写与分隔符差异）。"""
+    s = str(s or '').strip().lower()
+    return re.sub(r'[\s\-_.]+', '', s)
+
+
+def _match_acceptance_model(model, models):
+    """被测模型名与验收基线列名匹配（无视大小写；兼容 v 前缀变体，
+    如 deepseek-v4.1-flash ≡ deepseek-4.1-flash）。返回命中的列名或 None。"""
+    if not model or not models:
+        return None
+    k = _norm_model_key(model)
+    if not k:
+        return None
+    for name in models:
+        if _norm_model_key(name) == k:
+            return name
+    kv = re.sub(r'v(\d+)', r'\1', k)
+    for name in models:
+        if re.sub(r'v(\d+)', r'\1', _norm_model_key(name)) == kv:
+            return name
+    return None
+
+
+def _extract_actual_scores(rep):
+    """从 evalscope 报告提取主分与子集分（统一换算为 0~100）。
+
+    返回 (main, subsets)：main 为主分（顶层 score，缺失取首个 metric）；
+    subsets 为 {子集名: 分}（取首个 category 的 subsets）。
+    """
+    main = None
+    subsets = {}
+    if not isinstance(rep, dict):
+        return main, subsets
+    s = rep.get('score')
+    if isinstance(s, (int, float)) and not isinstance(s, bool):
+        main = float(s) * 100
+    for m in rep.get('metrics') or []:
+        if main is None and isinstance(m.get('score'), (int, float)):
+            main = float(m['score']) * 100
+        for cat in m.get('categories') or []:
+            for sub in cat.get('subsets') or []:
+                nm, sc = sub.get('name'), sub.get('score')
+                if isinstance(nm, str) and isinstance(sc, (int, float)) and nm not in subsets:
+                    subsets[nm] = float(sc) * 100
+    return main, subsets
+
+
+def _lookup_subset(subsets, name):
+    """按子集名取分（直接命中，否则大小写不敏感兜底）。"""
+    if name in subsets:
+        return subsets[name]
+    ln = str(name).lower()
+    for k, v in subsets.items():
+        if str(k).lower() == ln:
+            return v
+    return None
+
+
+def _acc_verdict(diff, tp, tb):
+    """判定：|diff|<=tp PASS；<=tb 边界；diff>tb 超标；diff<-tb FAIL。"""
+    if diff is None:
+        return 'na'
+    if abs(diff) <= tp:
+        return 'pass'
+    if abs(diff) <= tb:
+        return 'boundary'
+    return 'exceed' if diff > 0 else 'fail'
+
+
+_ACC_VERDICT_HTML = {
+    'pass': '<span class="acc-verdict-pass">✓ PASS</span>',
+    'boundary': '<span class="acc-verdict-boundary">△ 边界</span>',
+    'exceed': '<span class="acc-verdict-exceed">↑ 超标</span>',
+    'fail': '<span class="acc-verdict-fail">✗ FAIL</span>',
+    'na': '<span class="acc-verdict-na">—</span>',
+}
+
+
+def render_acceptance(reps, model):
+    """渲染「二、验收标准对比」：实测得分 vs 效果验收标准基线（±2-4% 浮动）。"""
+    acc = load_acceptance()
+    if not acc:
+        return ''
+    parts = ['<h2 id="acceptance">二、验收标准对比</h2>']
+    meta = acc.get('_meta') or {}
+    r0 = reps[0] if reps else {}
+    ds_name = r0.get('dataset_name') or ''
+    ds_pretty = r0.get('dataset_pretty_name') or ds_name
+    models = acc.get('models') or {}
+
+    matched = _match_acceptance_model(model, models)
+    if not matched:
+        parts.append(
+            f'<p class="section-intro">验收标准未收录模型 <b>{escape(str(model))}</b>，本次不做对比'
+            f'（基线来源：效果验收标准.xlsx → acceptance_data.json）。</p>')
+        return '\n'.join(parts)
+    if not ds_name:
+        parts.append('<p class="section-intro">未识别出数据集，跳过验收对比。</p>')
+        return '\n'.join(parts)
+
+    rows = [row for row in acc.get('rows') or [] if row.get('dataset') == ds_name]
+    if not rows:
+        parts.append(
+            f'<p class="section-intro">验收标准未收录数据集 <b>{escape(str(ds_pretty))}</b> 的基线，本次不做对比。</p>')
+        return '\n'.join(parts)
+
+    tol = meta.get('tolerance') or {}
+    tp = float(tol.get('pass', 2.0))
+    tb = float(tol.get('boundary', 4.0))
+    baseline_map = models.get(matched) or {}
+    main, subsets = _extract_actual_scores(r0)
+
+    counts = {'pass': 0, 'boundary': 0, 'exceed': 0, 'fail': 0, 'na': 0}
+    trs = []
+    for row in rows:
+        label = row.get('label') or row.get('key') or ''
+        base = baseline_map.get(row.get('key'))
+        if row.get('subset') is None:
+            actual = main
+        else:
+            actual = _lookup_subset(subsets, row.get('subset'))
+        base_v = float(base) if isinstance(base, (int, float)) and not isinstance(base, bool) else None
+        if base_v is None or actual is None:
+            diff, verdict = None, 'na'
+        else:
+            diff = actual - base_v
+            verdict = _acc_verdict(diff, tp, tb)
+        counts[verdict] += 1
+
+        def _fmt_diff(d):
+            if d is None:
+                return '<span class="acc-verdict-na">—</span>'
+            cls = 'acc-diff-pos' if d >= 0 else 'acc-diff-neg'
+            return f'<span class="{cls}">{"+" if d >= 0 else ""}{d:.2f}</span>'
+
+        base_txt = fmt(base_v, 2) if base_v is not None else '—（无基线）'
+        actual_txt = fmt(actual, 2) if actual is not None else '未测得'
+        trs.append(
+            f'<tr><td class="metric-name">{escape(str(label))}</td>'
+            f'<td>{escape(str(base_txt))}</td><td>{escape(str(actual_txt))}</td>'
+            f'<td>{_fmt_diff(diff)}</td><td>{_ACC_VERDICT_HTML[verdict]}</td></tr>')
+
+    n_total = len(rows)
+    n_hit = counts['pass'] + counts['boundary'] + counts['exceed']
+    src_note = (meta.get('model_sources') or {}).get(matched, '')
+    summary = (f'{n_hit}/{n_total} 项在 ±{fmt(tb, 0)}pp 浮动范围内'
+               f'（PASS {counts["pass"]} · 边界 {counts["boundary"]} · 超标 {counts["exceed"]} · '
+               f'FAIL {counts["fail"]} · 未对比 {counts["na"]}）')
+    parts.append(
+        f'<p class="section-intro">被测模型 <b>{escape(str(model))}</b> 命中验收基线列 <b>{escape(str(matched))}</b>。'
+        f'差值 = 实测 − 基线（单位：百分点）：|差值|≤{fmt(tp, 0)}pp 判 PASS，'
+        f'{fmt(tp, 0)}~{fmt(tb, 0)}pp 判边界（仍在浮动范围），&gt;{fmt(tb, 0)}pp 判超标/FAIL。'
+        f'本数据集 {summary}。</p>')
+    parts.append(
+        '<table class="metric-table"><thead><tr>'
+        '<th>数据项</th><th>验收基线</th><th>实测得分</th><th>差值 (pp)</th>'
+        f'<th>判定 (±{fmt(tp, 0)}/{fmt(tb, 0)}pp)</th></tr></thead><tbody>'
+        + ''.join(trs) + '</tbody></table>')
+    if src_note:
+        parts.append(f'<p class="acc-note">基线来源：{escape(str(src_note))}；'
+                     f'基线数据：效果验收标准.xlsx（同步至 acceptance_data.json）。</p>')
+    return '\n'.join(parts)
+
+
 # ==================== 工具函数 ====================
 
 def fmt(v, d=2):
@@ -252,6 +448,10 @@ def load_evalscope_reports(run_dir: Path, model: str):
     mdir = rdir / model
     if mdir.is_dir():
         cands.extend(sorted(mdir.glob("*.json")))
+    if not cands:
+        # 兜底：model 目录不存在或为空（-m 与 evalscope 实际落盘目录名大小写/写法有差异）
+        # → 扫描所有子目录，避免 reps 为空导致验收对比/效果稳定性章节缺失
+        cands.extend(sorted(p for p in rdir.glob('*/*.json')))
     cands.extend(sorted(p for p in rdir.glob("*.json")))
     for p in cands:
         try:
@@ -796,7 +996,7 @@ def render_conclusion(model, cases, skipped, reps, perf_cases):
 def render_quality(reps):
     if not reps:
         return ""
-    parts = ['<h2 id="quality">二、效果与稳定性</h2>']
+    parts = ['<h2 id="quality">三、效果与稳定性</h2>']
     r = reps[0]
     pass1 = next((m.get("score") for m in (r.get("metrics") or []) if m.get("name") == "mean_acc_pass^1"), None)
     pass3 = next((m.get("score") for m in (r.get("metrics") or []) if m.get("name") == "mean_acc_pass^3"), None)
@@ -868,7 +1068,7 @@ def render_performance(perf_cases):
     rows.append(row("题目耗时", "每个 case 端到端总耗时", "min",
                      [c["duration"] / 60 for c in perf_cases if c["duration"] > 0]))
     return (
-        '<h2 id="performance">三、用户体验与性能</h2>'
+        '<h2 id="performance">四、用户体验与性能</h2>'
         f'<p class="section-intro">全部指标均按 {n:,} 个有效 case 统计。Avg 反映整体水平，P50 代表典型体验，P90/P95 用于观察长尾。</p>'
         '<div class="performance-panel"><div class="performance-head"><div><h3>Case 维度性能分位</h3>'
         '<p>首字响应、全部模型调用、Token 消耗、生成时延与调用规模</p></div>'
@@ -939,7 +1139,7 @@ def render_config(cfg, reps):
 
     hl = ("执行轮次 repeats", "执行并发数 eval_batch_size", "随机种子 seed")
     return (
-        '<h2 id="config">四、模型与评测配置</h2>'
+        '<h2 id="config">五、模型与评测配置</h2>'
         '<p class="section-intro">以下配置用于复现本次结果。所有参数集中在被测模型与裁判模型两大类，便于横向对比时定位差异。</p>'
         '<div class="config-grid">'
         '<article class="config-block subject" data-config-role="subject">'
@@ -990,7 +1190,7 @@ def render_cases(cases, skipped, reps):
         intro = (f'共 {n_base} 道题，点击题目行展开查看评分、模型答案、对话、工具调用和性能证据。')
         col2 = '题目名称（点击展开详情）'
     head = (
-        '<h2 id="cases">五、逐题结果与评测证据</h2>'
+        '<h2 id="cases">六、逐题结果与评测证据</h2>'
         f'<p class="section-intro">{intro}</p>'
         '<div class="toolbar issue-toolbar">'
         '<input id="issueSearch" class="search-box" type="search" placeholder="搜索题号或题目内容…" aria-label="搜索题目" oninput="filterIssues()">'
@@ -1079,7 +1279,7 @@ def render_cases(cases, skipped, reps):
 def render_skipped_section(skipped):
     if not skipped:
         return ""
-    parts = ['<h2 id="skipped">六、异常跳过题目</h2>',
+    parts = ['<h2 id="skipped">七、异常跳过题目</h2>',
              f'<p class="section-intro">下方逐条列出 {len(skipped)} 道 SKIP 样本的题目描述、出错前交互轨迹和异常堆栈，可点击展开查看。</p>']
     for s in skipped:
         body_html, sid, subset, etype, err_short = render_skip_body(s)
@@ -1131,13 +1331,15 @@ def generate_html(cases, skipped, reps, cfg, model) -> str:
     return "\n".join([
         '<!DOCTYPE html><html lang="zh-CN"><head><meta charset="UTF-8">',
         f'<title>{escape(model)} × {escape((reps[0] if reps else {}).get("dataset_pretty_name", "评测"))} 模型评测报告</title>',
-        f'<style>{CSS}</style></head><body>',
+        f'<style>{CSS}{ACCEPTANCE_CSS}</style></head><body>',
         render_hero(model, reps, cases, skipped, cfg),
         '<nav class="section-nav" aria-label="报告目录">'
-        '<a href="#overview">一、核心结论</a><a href="#quality">二、效果与稳定性</a>'
-        '<a href="#performance">三、用户体验与性能</a><a href="#config">四、模型与评测配置</a>'
-        '<a href="#cases">五、逐题结果与评测证据</a><a href="#skipped">六、异常跳过题目</a></nav>',
+        '<a href="#overview">一、核心结论</a><a href="#acceptance">二、验收标准对比</a>'
+        '<a href="#quality">三、效果与稳定性</a>'
+        '<a href="#performance">四、用户体验与性能</a><a href="#config">五、模型与评测配置</a>'
+        '<a href="#cases">六、逐题结果与评测证据</a><a href="#skipped">七、异常跳过题目</a></nav>',
         render_conclusion(model, cases, skipped, reps_cfg, perf_cases),
+        render_acceptance(reps, model),
         render_quality(reps),
         render_performance(perf_cases),
         render_config(cfg, reps),

@@ -1,0 +1,132 @@
+{
+  "_meta": {
+    "source": "thvv/eval/效果验收标准.xlsx",
+    "updated": "2026-09-17",
+    "unit": "百分点",
+    "tolerance": { "pass": 2.0, "boundary": 4.0 },
+    "verdict_rule": "差值 = 实测 - 基线；|差值|<=2 PASS；2<|差值|<=4 边界；差值<-4 FAIL；差值>4 超标",
+    "model_sources": {
+      "kimi-k3": "供应商/官方口径",
+      "HY3": "THVV 内部实测",
+      "deepseek-v4-flash-0731": "THVV 内部实测",
+      "hy4-preview": "THVV 内部实测",
+      "glm-5.3": "官方榜单（DataLearner/z.ai 2026-09，HLE 为无工具口径）",
+      "glm-5.3-flash": "THVV 内部实测",
+      "deepseek-v4.1-flash": "THVV 内部实测"
+    }
+  },
+  "rows": [
+    { "key": "aime26", "label": "AIME2026", "dataset": "aime26", "subset": null },
+    { "key": "hle", "label": "HLE", "dataset": "hle", "subset": null },
+    { "key": "mmlu_pro", "label": "MMLU-Pro", "dataset": "mmlu_pro", "subset": null },
+    { "key": "simple_qa", "label": "SimpleQA", "dataset": "simple_qa", "subset": null },
+    { "key": "gpqa_diamond", "label": "GPQA-Diamond", "dataset": "gpqa_diamond", "subset": null },
+    { "key": "longbench_v2:short", "label": "LongBench V2 (Short)", "dataset": "longbench_v2", "subset": "short" },
+    { "key": "tau2_bench:retail", "label": "τ²-Bench · 零售 retail", "dataset": "tau2_bench", "subset": "retail" },
+    { "key": "tau2_bench:telecom", "label": "τ²-Bench · 通信 telecom", "dataset": "tau2_bench", "subset": "telecom" },
+    { "key": "tau2_bench:airline", "label": "τ²-Bench · 航空 airline", "dataset": "tau2_bench", "subset": "airline" },
+    { "key": "tau2_bench", "label": "τ²-Bench OVERALL", "dataset": "tau2_bench", "subset": null },
+    { "key": "live_code_bench", "label": "LiveCodeBench", "dataset": "live_code_bench", "subset": null },
+    { "key": "swe_bench_verified_mini_agentic", "label": "SWE-bench Verified Mini Agentic", "dataset": "swe_bench_verified_mini_agentic", "subset": null }
+  ],
+  "models": {
+    "kimi-k3": {
+      "aime26": 95,
+      "hle": 44,
+      "mmlu_pro": 89.52,
+      "simple_qa": 46.1,
+      "gpqa_diamond": 92.76,
+      "longbench_v2:short": 72.22,
+      "tau2_bench:retail": 82.22,
+      "tau2_bench:telecom": 71.53,
+      "tau2_bench:airline": 66.52,
+      "tau2_bench": 75.02,
+      "live_code_bench": 93.18,
+      "swe_bench_verified_mini_agentic": null
+    },
+    "HY3": {
+      "aime26": 96.63,
+      "hle": 29.74,
+      "mmlu_pro": 87.36,
+      "simple_qa": 34.41,
+      "gpqa_diamond": 90.66,
+      "longbench_v2:short": 65.54,
+      "tau2_bench:retail": 75.18,
+      "tau2_bench:telecom": 76.49,
+      "tau2_bench:airline": 63.45,
+      "tau2_bench": 73.61,
+      "live_code_bench": null,
+      "swe_bench_verified_mini_agentic": null
+    },
+    "deepseek-v4-flash-0731": {
+      "aime26": 95.67,
+      "hle": 32.35,
+      "mmlu_pro": 87.25,
+      "simple_qa": 37.56,
+      "gpqa_diamond": 89.73,
+      "longbench_v2:short": 68.89,
+      "tau2_bench:retail": 87.7,
+      "tau2_bench:telecom": 98.42,
+      "tau2_bench:airline": 68.05,
+      "tau2_bench": 88.7,
+      "live_code_bench": null,
+      "swe_bench_verified_mini_agentic": null
+    },
+    "hy4-preview": {
+      "aime26": 96,
+      "hle": 34.33,
+      "mmlu_pro": 85.96,
+      "simple_qa": 33.7,
+      "gpqa_diamond": 94.44,
+      "longbench_v2:short": 67.56,
+      "tau2_bench:retail": 82.22,
+      "tau2_bench:telecom": 77.14,
+      "tau2_bench:airline": 74.7,
+      "tau2_bench": 77.27,
+      "live_code_bench": 86.92,
+      "swe_bench_verified_mini_agentic": 85.42
+    },
+    "glm-5.3": {
+      "aime26": null,
+      "hle": 42.3,
+      "mmlu_pro": null,
+      "simple_qa": null,
+      "gpqa_diamond": 91.7,
+      "longbench_v2:short": null,
+      "tau2_bench:retail": null,
+      "tau2_bench:telecom": null,
+      "tau2_bench:airline": null,
+      "tau2_bench": null,
+      "live_code_bench": null,
+      "swe_bench_verified_mini_agentic": null
+    },
+    "glm-5.3-flash": {
+      "aime26": 93.75,
+      "hle": 29.24,
+      "mmlu_pro": 87.58,
+      "simple_qa": 34.56,
+      "gpqa_diamond": 90.4,
+      "longbench_v2:short": 67.6,
+      "tau2_bench:retail": 88.6,
+      "tau2_bench:telecom": 98.25,
+      "tau2_bench:airline": 86,
+      "tau2_bench": 92.09,
+      "live_code_bench": 87.46,
+      "swe_bench_verified_mini_agentic": 81.63
+    },
+    "deepseek-v4.1-flash": {
+      "aime26": 97.92,
+      "hle": 33.37,
+      "mmlu_pro": 87.86,
+      "simple_qa": 41.33,
+      "gpqa_diamond": 90.91,
+      "longbench_v2:short": 64.44,
+      "tau2_bench:retail": 89.47,
+      "tau2_bench:telecom": 93.4,
+      "tau2_bench:airline": 90,
+      "tau2_bench": 91.11,
+      "live_code_bench": 93.18,
+      "swe_bench_verified_mini_agentic": 90
+    }
+  }
+}

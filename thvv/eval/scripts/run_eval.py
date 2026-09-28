@@ -42,7 +42,7 @@ import tarfile
 from datetime import datetime
 
 # v2 效果评测报告生成器（eval_report_v2.py 与本脚本同目录）：
-# 六章模版（核心结论/效果稳定性/性能/配置/逐题证据/异常跳过）。
+# 七章模版（核心结论/验收标准对比/效果稳定性/性能/配置/逐题证据/异常跳过）。
 # 导入失败时降级为「不出报告」，绝不阻断主流程。
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
@@ -100,7 +100,7 @@ SUPPORTED_DATASETS = {
     'tau2_bench': {
         'label': 'tau2_bench',
         'default_repeats': 5,
-        'default_eval_batch_size': 5,
+        'default_eval_batch_size': 30,
         'judge_strategy': 'auto',
         'requires_judge_model': False,
         'description': 'tau2-bench Agent 对话评测',
@@ -132,7 +132,7 @@ SUPPORTED_DATASETS = {
     'live_code_bench': {
         'label': 'live_code_bench',
         'default_repeats': 1,
-        'default_eval_batch_size': 5,
+        'default_eval_batch_size': 16,
         'judge_strategy': 'auto',
         'requires_judge_model': False,
         'requires_docker': True,
@@ -141,7 +141,7 @@ SUPPORTED_DATASETS = {
     'swe_bench_verified_mini_agentic': {
         'label': 'swe_bench_verified_mini_agentic',
         'default_repeats': 1,
-        'default_eval_batch_size': 1,
+        'default_eval_batch_size': 4,
         'judge_strategy': 'auto',
         'requires_judge_model': False,
         'requires_docker': True,
@@ -528,7 +528,7 @@ def build_eval_command(args, dataset_key, run_dir=None):
     judge_strategy = (args.judge_strategy if args.judge_strategy is not None
                       else ds_config['judge_strategy'])
 
-    output_dir = args.output_dir or get_result_dir(args.provider, args.model_name, dataset_key, run_dir)
+    output_dir = get_result_dir(args.provider, args.model_name, dataset_key, run_dir)
 
     cmd = [
         'evalscope', 'eval',
@@ -655,7 +655,16 @@ def build_eval_command(args, dataset_key, run_dir=None):
     if args.limit is not None:
         cmd.extend(['--limit', str(args.limit)])
     if args.use_cache:
-        cmd.extend(['--use-cache', args.use_cache])
+        # --use_cache 支持两种形态：
+        #   1) 旧 run 根目录（其下按数据集分子目录）：自动拼 <use_cache>/<label>
+        #   2) 单数据集 output 目录（其下有 predictions/）：原样使用
+        # 该数据集的缓存目录不存在时不注入（从头跑）
+        cache_root = args.use_cache
+        ds_cache = os.path.join(cache_root, ds_config['label'])
+        if os.path.isdir(os.path.join(ds_cache, 'predictions')):
+            cmd.extend(['--use-cache', ds_cache])
+        elif os.path.isdir(os.path.join(cache_root, 'predictions')):
+            cmd.extend(['--use-cache', cache_root])
     if args.debug:
         cmd.append('--debug')
 
@@ -873,7 +882,7 @@ def _run_with_retry(cmd, output_dir, model_name, dataset_label):
 # 结果持久化
 # ---------------------------------------------------------------------------
 
-# v2 效果评测报告文件名（六章模版：核心结论/效果稳定性/性能/配置/逐题证据/异常跳过）
+# v2 效果评测报告文件名（七章模版：核心结论/验收标准对比/效果稳定性/性能/配置/逐题证据/异常跳过）
 _V2_REPORT_NAME = 'eval_report_v2.html'
 
 # reports/*.json 中体积过大、不适合整段塞进汇总与报告的字段
@@ -919,7 +928,7 @@ def _save_dataset_summary(ds_key, ds_label, output_dir, success, report_data,
     print(f"  📄 结果摘要已保存: {summary_path}")
     if summary['skipped_count']:
         print(f"  ⚠️ 容错跳过 {summary['skipped_count']} 题，"
-              f"有效样本数已小于实际请求题数（详见 eval_report_v2.html 第六章）")
+              f"有效样本数已小于实际请求题数（详见 eval_report_v2.html 第七章）")
     return summary
 
 
@@ -965,7 +974,7 @@ def _format_duration(seconds):
 # ---------------------------------------------------------------------------
 
 def _generate_v2_report(output_dir, model_name, success):
-    """生成 v2 效果评测报告（六章模版，THVV 对外唯一报告形态）。
+    """生成 v2 效果评测报告（七章模版，THVV 对外唯一报告形态）。
 
     数据源为 evalscope 落盘产物：reviews/、skipped_samples.jsonl、
     logs/eval_log.log（跳过兜底）、reports/*.json、configs/task_config.yaml。
@@ -1018,7 +1027,7 @@ def _package_results(result_base_dir, html_report_path, all_summaries):
             details_path = os.path.join(output_dir, 'per_sample_details.csv')
             if os.path.exists(details_path):
                 files_to_pack.append((details_path, f'{ds_label}/per_sample_details.csv'))
-            # v2 效果评测报告（六章模版），生成了就一并归档
+            # v2 效果评测报告（七章模版），生成了就一并归档
             v2_path = os.path.join(output_dir, _V2_REPORT_NAME)
             if os.path.exists(v2_path):
                 files_to_pack.append((v2_path, f'{ds_label}/{_V2_REPORT_NAME}'))
@@ -1126,8 +1135,10 @@ def parse_args():
                         help='Docker Sandbox 配置（JSON）')
     parser.add_argument('--dataset_dir', default=os.environ.get('EVAL_DATASET_DIR'), type=str,
                         help='本地数据集缓存目录，默认 eval/datasets')
-    parser.add_argument('--use_cache', default=None, type=str, help='缓存续跑路径')
-    parser.add_argument('--output_dir', default=None, type=str, help='输出目录')
+    parser.add_argument('--use_cache', default=None, type=str,
+                        help='缓存续跑路径：旧 run 根目录（按数据集自动拼接）或单数据集 output 目录')
+    parser.add_argument('--output_dir', default=None, type=str,
+                        help='复用的 run 目录名（results/ 下，续跑时指定，结果继续写入该 run 目录）')
     parser.add_argument('--debug', action='store_true', help='开启 debug 模式')
 
     return parser.parse_args()
@@ -1172,11 +1183,12 @@ def main():
     # 一次 run 统一一个 run_dir：所有数据集 + 汇总产物落同一目录，
     # 保证 eval_summary / all_eval_summary / tar.gz / HTML 可被单一 run 目录圈定，
     # 避免 eval/results/*/*/eval_summary.json 捞到其他历史 run 的结果。
+    # --output_dir 传入已有 run 目录名时即为断点续跑（结果继续写入该目录）。
     run_dir = args.output_dir or make_run_dir(args.provider, args.model_name)
 
     # 确定结果根目录（run 目录本身，即所有产物的共同父目录）
     scripts_dir = os.path.dirname(os.path.abspath(__file__))
-    result_base = run_dir if args.output_dir else os.path.normpath(
+    result_base = os.path.normpath(
         os.path.join(scripts_dir, '..', 'results', run_dir)
     )
     overall_start_time = datetime.now()
@@ -1285,7 +1297,7 @@ def main():
         else:
             print(f"\n  ⚠️ 未找到 evalscope 报告: {report_path}")
 
-        # 生成 v2 效果评测报告（六章模版，对外唯一报告形态）
+        # 生成 v2 效果评测报告（七章模版，对外唯一报告形态）
         v2_info = _generate_v2_report(final_output_dir, args.model_name, success)
 
         summary = _save_dataset_summary(
@@ -1320,7 +1332,7 @@ def main():
 
     _save_overall_summary(all_summaries, args.provider, args.model_name, result_base)
     # 按数据集生成产物：在每个数据集的 output_dir 下生成该数据集独立的
-    # per_sample_details.csv（六章模版报告 eval_report_v2.html 已在单数据集执行阶段生成）。
+    # per_sample_details.csv（七章模版报告 eval_report_v2.html 已在单数据集执行阶段生成）。
     # 数据集级不再重复生成 all_eval_summary.json / eval_results.tar.gz——
     # 汇总只留根目录一份，打包只留 run 根一份，避免内容重复的产物。
     # 必须早于父级打包 —— per_sample_details.csv 在这里才生成，否则进不了父级 tar.gz。
@@ -1344,7 +1356,7 @@ def _export_per_dataset_artifacts(all_summaries):
       ├── eval_results.tar.gz             # 打包归档（仅 run 根一份）
       ├── aime26/
       │   ├── eval_summary.json           # 数据集摘要
-      │   ├── eval_report_v2.html         # 六章模版报告（执行阶段已生成）
+      │   ├── eval_report_v2.html         # 七章模版报告（执行阶段已生成）
       │   ├── per_sample_details.csv      # 逐题明细
       │   ├── logs/  configs/             # evalscope 原始日志与配置
       │   └── （predictions/ reviews/ reports/ 打包后被清理，见 _cleanup_redundant_artifacts）
