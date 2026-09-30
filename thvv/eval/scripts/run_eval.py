@@ -49,6 +49,21 @@ try:
     import eval_report_v2
 except ImportError:  # pragma: no cover
     eval_report_v2 = None
+import cache_stats  # noqa: E402  缓存命中率统计（纯标准库，与本脚本同目录）
+import perf_stats  # noqa: E402  吞吐（TPM/TPS）变化统计（纯标准库，与本脚本同目录）
+
+# evalscope 启动器：逐次记录每个 Chat 请求的原始 usage 到 <work_dir>/usage_ledger.jsonl
+_USAGE_HOOK = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'usage_hook.py')
+_USAGE_LEDGER_ENV = 'THVV_USAGE_LEDGER'
+
+
+def _evalscope_launcher():
+    """优先用 usage_hook 启动 evalscope（可统计缓存命中）；当前解释器找不到 evalscope 时
+    回退到 evalscope 命令行（无 usage 记录）。"""
+    import importlib.util
+    if os.path.isfile(_USAGE_HOOK) and importlib.util.find_spec('evalscope') is not None:
+        return [sys.executable, _USAGE_HOOK]
+    return ['evalscope']
 
 # ---------------------------------------------------------------------------
 # 数据集注册表
@@ -530,8 +545,8 @@ def build_eval_command(args, dataset_key, run_dir=None):
 
     output_dir = args.output_dir or get_result_dir(args.provider, args.model_name, dataset_key, run_dir)
 
-    cmd = [
-        'evalscope', 'eval',
+    cmd = _evalscope_launcher() + [
+        'eval',
         '--model', args.model_name,
         '--api-url', args.base_url,
         '--api-key', args.api_key,
@@ -884,7 +899,8 @@ _SUMMARY_DROP_KEYS = {
 
 
 def _save_dataset_summary(ds_key, ds_label, output_dir, success, report_data,
-                          retries, rate_limited, elapsed, skipped_count=0):
+                          retries, rate_limited, elapsed, skipped_count=0,
+                          cache_stats_data=None, perf_stats_data=None):
     """将单个数据集的评测结果保存为 JSON。
 
     skipped_count 为被 ignore_errors 静默跳过的题数（由 v2 报告生成器
@@ -912,6 +928,10 @@ def _save_dataset_summary(ds_key, ds_label, output_dir, success, report_data,
         summary['perf_metrics'] = report_data.get('perf_metrics')
 
     summary['skipped_count'] = int(skipped_count or 0)
+    if cache_stats_data is not None:
+        summary['cache_stats'] = cache_stats_data
+    if perf_stats_data is not None:
+        summary['throughput_stats'] = perf_stats_data
     summary['report_v2'] = os.path.join(output_dir, _V2_REPORT_NAME)
 
     with open(summary_path, 'w') as f:
@@ -936,6 +956,12 @@ def _save_overall_summary(all_summaries, provider, model_name, output_base_dir):
         'success_count': sum(1 for s in all_summaries if s.get('success')),
         'failure_count': sum(1 for s in all_summaries if not s.get('success')),
         'rate_limited_count': sum(1 for s in all_summaries if s.get('rate_limited')),
+        # 整次运行（全部数据集合并）的 Chat 协议缓存命中统计
+        'cache_stats': cache_stats.compute_for_dirs(
+            [s.get('output_dir', '') for s in all_summaries if s.get('output_dir')], model_name),
+        # 整次运行（全部数据集合并）的吞吐 TPM/TPS 变化统计
+        'throughput_stats': perf_stats.compute_for_dirs(
+            [s.get('output_dir', '') for s in all_summaries if s.get('output_dir')], model_name),
         'results': all_summaries,
     }
 
@@ -1018,6 +1044,10 @@ def _package_results(result_base_dir, html_report_path, all_summaries):
             details_path = os.path.join(output_dir, 'per_sample_details.csv')
             if os.path.exists(details_path):
                 files_to_pack.append((details_path, f'{ds_label}/per_sample_details.csv'))
+            # 逐次调用 usage 流水（缓存命中率的原始证据）
+            ledger_path = cache_stats.ledger_path_of(output_dir)
+            if os.path.exists(ledger_path):
+                files_to_pack.append((ledger_path, f'{ds_label}/{cache_stats.LEDGER_NAME}'))
             # v2 效果评测报告（六章模版），生成了就一并归档
             v2_path = os.path.join(output_dir, _V2_REPORT_NAME)
             if os.path.exists(v2_path):
@@ -1238,11 +1268,20 @@ def main():
         cmd, output_dir = build_eval_command(args, ds_key, run_dir)
         print(f"\n  执行命令:\n  {' '.join(cmd)}\n")
 
+        # usage 流水落在数据集目录下；重试续跑追加写入，统计覆盖整个过程
+        os.environ[_USAGE_LEDGER_ENV] = cache_stats.ledger_path_of(output_dir)
         overhead_start = datetime.now()
         success, final_output_dir, retries, rate_limited = _run_with_retry(
             cmd, output_dir, args.model_name, ds_config['label']
         )
         elapsed = (datetime.now() - overhead_start).total_seconds()
+        os.environ.pop(_USAGE_LEDGER_ENV, None)
+
+        _ledger = cache_stats.load_ledger(final_output_dir)
+        ds_cache_stats = cache_stats.compute(_ledger, args.model_name)
+        ds_perf_stats = perf_stats.compute(_ledger, args.model_name)
+        print(f"\n  🗄️  [{ds_config['label']}] {cache_stats.summary_line(ds_cache_stats)}")
+        print(f"  📈 [{ds_config['label']}] {perf_stats.summary_line(ds_perf_stats)}")
 
         all_results[ds_key] = {
             'success': success,
@@ -1292,6 +1331,8 @@ def main():
             ds_key, ds_config['label'], final_output_dir,
             success, report_data, retries, rate_limited, elapsed,
             skipped_count=v2_info['skipped'],
+            cache_stats_data=ds_cache_stats,
+            perf_stats_data=ds_perf_stats,
         )
         all_summaries.append(summary)
 
@@ -1308,6 +1349,9 @@ def main():
         retry_info = f" (重试{r['retries']}次)" if r.get('retries', 0) > 0 else ""
         limit_info = " [限流]" if r.get('rate_limited') else ""
         print(f"  {status} [{ds_label}]{retry_info}{limit_info}  {r.get('output_dir', 'N/A')}")
+        ds_sum = next((s for s in all_summaries if s.get('dataset') == ds_label), {})
+        if ds_sum.get('cache_stats'):
+            print(f"       {cache_stats.summary_line(ds_sum['cache_stats'])}")
         if r.get('success'):
             success_list.append(ds_label)
         else:
@@ -1317,6 +1361,10 @@ def main():
     print(f"  总耗时: {_format_duration(total_elapsed)}")
     if fail_list:
         print(f"  失败: {', '.join(fail_list)}")
+    if len(all_summaries) > 1:
+        _dirs = [s.get('output_dir', '') for s in all_summaries if s.get('output_dir')]
+        print(f"  整体{cache_stats.summary_line(cache_stats.compute_for_dirs(_dirs, args.model_name))}")
+        print(f"  整体{perf_stats.summary_line(perf_stats.compute_for_dirs(_dirs, args.model_name))}")
 
     _save_overall_summary(all_summaries, args.provider, args.model_name, result_base)
     # 按数据集生成产物：在每个数据集的 output_dir 下生成该数据集独立的
@@ -1563,7 +1611,9 @@ def _export_per_sample_details(output_dir):
     """从 reviews/ 和 predictions/ 提取每道题的 得分/request/response，生成 per_sample_details.csv。
 
     产物：<dataset>/per_sample_details.csv
-      columns: sample_id, score, request, response
+      columns: sample_id, score, request, response, dataset,
+               cache_calls, prompt_tokens, cached_tokens, cache_hit_rate,
+               cache_hit_calls, cache_non_compliant_calls（被测模型自身调用的缓存命中）
 
     数据来源：
       - reviews/<model>/*.jsonl  每行一道题：sample_score（得分）、sample_metadata（题目）
@@ -1612,13 +1662,24 @@ def _export_per_sample_details(output_dir):
     # 单条 response/request 最长保留字符数（超出截断，保持 CSV 可读可控）
     MAX_TEXT_LEN = 20000
 
+    # 逐题缓存命中（被测模型自身调用；ledger 缺失或无题目归属时为空）
+    ledger = cache_stats.load_ledger(output_dir)
+
     # 写 CSV（UTF-8 带 BOM，Excel 直接打开不乱码）
     csv_path = os.path.join(output_dir, 'per_sample_details.csv')
     rows_written = 0
     with open(csv_path, 'w', newline='', encoding='utf-8-sig') as f:
         writer = csv.writer(f)
-        writer.writerow(['sample_id', 'score', 'request', 'response'])
+        writer.writerow(['sample_id', 'score', 'request', 'response',
+                         'dataset', 'cache_calls', 'prompt_tokens', 'cached_tokens',
+                         'cache_hit_rate', 'cache_hit_calls', 'cache_non_compliant_calls'])
         for rf in review_files:
+            # reviews/<model>/<benchmark>_<subset>.jsonl → 模型名、数据集名（与 ledger 对齐）
+            rel_parts = os.path.relpath(rf, reviews_dir).split(os.sep)
+            rf_model = rel_parts[0] if len(rel_parts) > 1 else None
+            rf_dataset = os.path.join(*rel_parts[1:]) if len(rel_parts) > 1 else rel_parts[0]
+            rf_dataset = rf_dataset[:-len('.jsonl')] if rf_dataset.endswith('.jsonl') else rf_dataset
+            case_cache = cache_stats.per_sample(ledger, rf_model) if ledger else {}
             try:
                 with open(rf, 'r', encoding='utf-8') as fh:
                     for line in fh:
@@ -1638,7 +1699,13 @@ def _export_per_sample_details(output_dir):
                         # request / response（截断超长字段）
                         request = _extract_request(row)[:MAX_TEXT_LEN]
                         response = _extract_response(row, pred_by_idx.get(str(sample_id)) or pred_by_idx.get(str(row.get('index'))))[:MAX_TEXT_LEN]
-                        writer.writerow([sample_id, score_str, request, response])
+                        cc = case_cache.get((rf_dataset, row.get('index'))) or {}
+                        hr = cc.get('hit_rate')
+                        writer.writerow([sample_id, score_str, request, response, rf_dataset,
+                                         cc.get('calls', ''), cc.get('prompt_tokens', ''),
+                                         cc.get('cached_tokens', ''),
+                                         f"{hr:.4f}" if hr is not None else '',
+                                         cc.get('hit_calls', ''), cc.get('non_compliant', '')])
                         rows_written += 1
             except Exception:
                 continue
