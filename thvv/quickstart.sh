@@ -36,25 +36,75 @@ ensure_requirements() {
         return 0
     fi
     local missing=()
-    while IFS= read -r line; do
-        [[ -z "$line" || "$line" == \#* ]] && continue
-        local pkg
-        pkg=$(echo "$line" | sed 's/\[.*\]//; s/[<>=!].*//; s/ //g')
-        local import_name="$pkg"
-        case "$pkg" in
-            evalscope) import_name="evalscope" ;;
-            transformers) import_name="transformers" ;;
-            modelscope) import_name="modelscope" ;;
-            openai) import_name="openai" ;;
-            httpx) import_name="httpx" ;;
-            numpy) import_name="numpy" ;;
-            ijson) import_name="ijson" ;;
-            matplotlib) import_name="matplotlib" ;;
-        esac
-        if ! python3 -c "import $import_name" 2>/dev/null; then
-            missing+=("$line")
-        fi
-    done < "$req_file"
+    # 单进程完成全部校验：逐包起 Python 进程会带来十几秒开销（22 个包 ≈17s）。
+    # 判定顺序为「导入名探测 → 发行版元数据兜底」，避免 PyPI 名与导入名不一致（如
+    # PyYAML→yaml、modelscope-hub→modelscope.hub）被误判为缺失并触发无意义的 pip install。
+    local missing_out=""
+    missing_out=$(python3 - "$req_file" <<'PY'
+import importlib.util
+import re
+import sys
+from importlib import metadata
+
+ALIASES = {
+    'evalscope': 'evalscope',
+    'transformers': 'transformers',
+    'modelscope': 'modelscope',
+    'openai': 'openai',
+    'httpx': 'httpx',
+    'numpy': 'numpy',
+    'ijson': 'ijson',
+    'matplotlib': 'matplotlib',
+    'modelscope-hub': 'modelscope.hub',
+    'pydantic-settings': 'pydantic_settings',
+    'python-dotenv': 'dotenv',
+    'pyyaml': 'yaml',
+}
+
+
+def candidates(name):
+    seen, out = set(), []
+    for cand in (ALIASES.get(name.lower()), name, name.replace('-', '_'),
+                 name.replace('-', '.'), name.lower()):
+        if cand and cand not in seen:
+            seen.add(cand)
+            out.append(cand)
+    return out
+
+
+def importable(name):
+    for cand in candidates(name):
+        try:
+            if importlib.util.find_spec(cand) is not None:
+                return True
+        except (ImportError, ModuleNotFoundError, ValueError, AttributeError):
+            continue
+    return False
+
+
+def installed(name):
+    try:
+        metadata.distribution(name)
+        return True
+    except Exception:
+        return False
+
+
+for raw in open(sys.argv[1], encoding='utf-8'):
+    line = raw.split('#', 1)[0].strip()
+    if not line:
+        continue
+    pkg = re.sub(r'\[.*?\]', '', line)
+    pkg = re.split(r'[<>=!~]', pkg, 1)[0].strip()
+    if not pkg:
+        continue
+    if not importable(pkg) and not installed(pkg):
+        print(line)
+PY
+)
+    while IFS= read -r l; do
+        [[ -n "$l" ]] && missing+=("$l")
+    done <<< "$missing_out"
     
     if [[ ${#missing[@]} -eq 0 ]]; then
         echo -e "  ${GREEN}✓ $label 依赖已全部安装${NC}"
