@@ -86,7 +86,7 @@ bash quickstart.sh perf report               # 从 results/ 重新生成报告
 bash quickstart.sh eval list                 # 列出 11 个数据集
 bash quickstart.sh eval bench aime26         # 单数据集
 bash quickstart.sh eval bench aime26 --limit 30 --repeats 1 --eval_batch_size 10
-bash quickstart.sh eval bench all            # 全部
+bash quickstart.sh eval bench all            # 全部（默认不含 aime25 / swe_bench_pro，需显式指定）
 ```
 
 需 LLM Judge 的数据集（hle / simple_qa，`all` 同样强制）需提供 `--judge_api_key`；judge 模型与地址有默认值（`deepseek-v4-pro` @ `https://api.deepseek.com/v1`），可用 `--judge_model / --judge_base_url` 覆盖。限流自动等待 60s 并注入 `--use-cache` 续跑。详见 `thvv/eval/README.md`。

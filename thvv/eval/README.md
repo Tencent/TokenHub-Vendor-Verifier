@@ -74,7 +74,7 @@ bash quickstart.sh eval bench aime25
 # 多数据集
 bash quickstart.sh eval bench aime25,gpqa_diamond
 
-# 全部数据集
+# 全部数据集（默认不含 aime25 和 swe_bench_pro，需要请显式指定）
 bash quickstart.sh eval bench all
 
 # 带参数

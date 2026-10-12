@@ -514,10 +514,14 @@ def get_result_dir(provider, model_name, benchmark, run_dir=None):
     return os.path.normpath(os.path.join(scripts_dir, '..', 'results', run_dir, benchmark))
 
 
+# `--datasets all` 默认不包含的数据集（仍可显式指定，如 --datasets aime25）
+ALL_EXCLUDED_DATASETS = ('aime25', 'swe_bench_pro')
+
+
 def resolve_datasets(datasets_arg):
     """解析 --datasets 参数，返回 (known_list, unknown_list)"""
     if datasets_arg.strip().lower() == 'all':
-        return list(SUPPORTED_DATASETS.keys()), []
+        return [k for k in SUPPORTED_DATASETS if k not in ALL_EXCLUDED_DATASETS], []
     all_ds = [d.strip() for d in datasets_arg.split(',')]
     known = [d for d in all_ds if d in SUPPORTED_DATASETS]
     unknown = [d for d in all_ds if d not in SUPPORTED_DATASETS]
