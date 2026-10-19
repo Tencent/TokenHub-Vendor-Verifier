@@ -4,8 +4,14 @@ __pycache__/
 
 # 评测产物与缓存（体积大、可再生，不进版本库）
 thvv/eval/results/
-thvv/eval/datasets/
+thvv/eval/datasets/*
+# 例外：MSR-VTT 视频样本集（走 Git LFS 管理，见 .gitattributes）
+!thvv/eval/datasets/msr_vtt/
 thvv/perf/results/
+thvv/cache/results/
+thvv/cache/reports/
+thvv/cache/cache_store/
+thvv/cache/logs/
 # 压测数据集共 2.7GB：不走普通 Git 对象，改由 Git LFS 管理（见 .gitattributes 的 *.jsonl track 规则）
 # 运行日志（临时产物）
 *.log
