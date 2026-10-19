@@ -1,6 +1,6 @@
 # 大模型效果评测工具包
 
-本工具包用于对大模型进行**精度/效果评测**，基于 [EvalScope](https://github.com/modelscope/evalscope) 评测框架，支持 11 个主流数据集。
+本工具包用于对大模型进行**精度/效果评测**，基于 [EvalScope](https://github.com/modelscope/evalscope) 评测框架，支持 17 个主流数据集（含 6 个视频/图像多模态数据集）。
 
 **适用任意兼容 OpenAI 协议的模型 API**——只需在 `configs/.env` 中填写你的地址、密钥和模型名即可。
 
@@ -37,6 +37,67 @@
 | `live_code_bench` | LiveCodeBench 代码生成 | 1 | ❌ | ✅ |
 | `swe_bench_verified_mini_agentic` | SWE-Bench Agentic | 1 | ❌ | ✅ |
 | `swe_bench_pro` | SWE-Bench Pro | 1 | ❌ | ✅ |
+| `msr_vtt` | MSR-VTT 视频描述（CIDEr/BLEU/METEOR/ROUGE）【视频】 | 1 | ❌ | ❌ |
+| `mvbench` | MVBench 视频理解多选题（20 子集，默认 action_antonym）【视频】 | 1 | ❌ | ❌ |
+| `tvbench` | TVBench 时序视频理解多选题（10 子集，默认 action_count）【视频】 | 1 | ❌ | ❌ |
+| `videomme_v2` | Video-MME-v2 视频理解多选题（800 视频 / 3200 QA）【视频】 | 1 | ❌ | ❌ |
+| `math_vision` | MathVision 数学视觉推理【图像】 | 1 | ❌ | ❌ |
+| `hallusion_bench` | HallusionBench 幻觉检测（aAcc/qAcc/fAcc）【图像】 | 1 | ❌ | ❌ |
+
+### 多模态数据集说明
+
+新增 6 个视频/图像多模态数据集，由 EvalScope 原生 adapter 支持。**多模态数据集默认关闭思考模式、输出上限 8192**——`glm-5.3-flashx` / `kimi-k3` 等强制思考模型即使不传 thinking 也会输出 `reasoning_content`，`max_tokens` 过小（如 2048）会被思考耗尽导致最终答案为空（tvbench 0 分实锤），8192 给「思考 + 答案」留足空间。
+
+**视频子集**（默认只跑冒烟子集，用 `all` 跑全量）：
+
+| 数据集 | 默认子集 | 完整子集数 | 全量子集参数 |
+|--------|----------|:---:|------|
+| `mvbench` | `action_antonym` | 20 | `--mvbench_subset all` |
+| `tvbench` | `action_count` | 10 | `--tvbench_subset all` |
+| `videomme_v2` | `all` | 6（all / level_1 / level_2 / level_3 / logic / relevance） | `--videomme_v2_subset level_1` |
+
+**模型能力矩阵**（多模态数据集对输入模态的要求）：
+
+| 模型 | 图像 | 视频 | 可跑数据集 |
+|------|:---:|:---:|------|
+| `kimi-k3` | ✅ | ✅ | 全部 6 个 |
+| `glm-5.3-flashx` | ✅ | ✅ | 全部 6 个 |
+| `deepseek-flash` | ✅ | ❌ | 仅 `math_vision`、`hallusion_bench`（图像） |
+
+> `kimi-k3`（月之暗面，2.8T 原生多模态，图像/视频/文档）、`glm-5.3-flashx`（智谱，320B MoE 原生多模态，图片/视频/文件）均支持视频输入；`deepseek-flash`（DeepSeek V4.1 Flash）仅支持图片（JPEG/PNG/GIF/WebP），跑视频数据集会失败。
+
+**暂不支持：Video-Holmes**。EvalScope 1.9.x 未内置该数据集（视频幻觉检测），如需接入需自定义 adapter 并提供数据集源。
+
+**已知限制（TokenHub 网关冒烟实测）**：
+
+| 数据集 | 视频源 | 网关表现 |
+|--------|--------|----------|
+| `mvbench` / `tvbench` | 本地 MP4 归档 → base64 | ✅ 可跑（归档小） |
+| `videomme_v2` | url（YouTube）→ ❌ 400；archive → ✅ 但下载 ~1.9G | 已默认切 archive，全量可跑但首跑下载慢 |
+| `msr_vtt` | 本地视频目录（`eval/datasets/msr_vtt/test_1k`，已入库 Git LFS） | ✅ 用 `--dataset_hub huggingface` + `--msr_vtt_video_dir` 可跑 |
+
+> 视频数据集的 `url` 源多为 YouTube/Google Drive，TokenHub 网关（`tokenhub.tencentmaas.com`）无法访问这些外部链接，返回 `400 400001`。优先用 `archive` 源（本地 MP4 → base64）或提供本地视频目录。
+>
+> **MSR-VTT 视频样本集已入库 Git LFS**（`thvv/eval/datasets/msr_vtt/`）：`test_1k/`（1000 个评测视频）+ `smoke/`（40 个冒烟视频，train_7k/train_9k 各 20），附 `test_1k.json` / `smoke.json` 清单（含 caption）。数据源默认是 ModelScope 的 `validation` 集（video_id 与本地 `test_1k` 不重叠），跑本地视频必须切 HF 源 `VLM2Vec/MSR-VTT`（`test_1k` 集，video_id 一一对应）。评分依赖 `pycocoevalcap`（CIDEr/BLEU/METEOR/ROUGE），见 `requirements.txt`。
+
+**使用示例：**
+
+```bash
+# 单数据集（默认冒烟子集）
+bash quickstart.sh eval bench mvbench --limit 10
+
+# 跑全量 20 个子集
+bash quickstart.sh eval bench mvbench --mvbench_subset all
+
+# 图像类（deepseek-flash 也支持）
+bash quickstart.sh eval bench math_vision,hallusion_bench
+
+# MSR-VTT 视频描述（本地视频 + HF 源；--limit N 冒烟，去掉则跑全量 test_1k）
+bash quickstart.sh eval bench msr_vtt \
+  --dataset_hub huggingface \
+  --msr_vtt_video_dir eval/datasets/msr_vtt/test_1k \
+  --limit 10
+```
 
 ---
 

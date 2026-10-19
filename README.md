@@ -11,7 +11,7 @@
 | 模块 | 说明 | 状态 |
 |------|------|:---:|
 | `perf` | 性能压测：1k~200k 输入长度档位 × 并发梯度全组合，含成功率早停、温度 / tokenizer 自适应，产出 **HTML（37 列全指标 + 失败请求明细）+ xlsx 双报告** | ✅ |
-| `eval` | 效果评测：11 个主流数据集（AIME25/26、GPQA-Diamond、HLE、tau2-bench、MMLU-Pro、SimpleQA、LongBench v2、LiveCodeBench、SWE-Bench…），自动产出**效果评测报告** | ✅ |
+| `eval` | 效果评测：17 个主流数据集（AIME25/26、GPQA-Diamond、HLE、tau2-bench、MMLU-Pro、SimpleQA、LongBench v2、LiveCodeBench、SWE-Bench，及 MSR-VTT、MVBench、TVBench、MathVision、HallusionBench、Video-MME-v2 六个多模态数据集），自动产出**效果评测报告** | ✅ |
 
 ---
 
@@ -83,7 +83,7 @@ bash quickstart.sh perf report               # 从 results/ 重新生成报告
 ### 4. 效果评测
 
 ```bash
-bash quickstart.sh eval list                 # 列出 11 个数据集
+bash quickstart.sh eval list                 # 列出 17 个数据集
 bash quickstart.sh eval bench aime26         # 单数据集
 bash quickstart.sh eval bench aime26 --limit 30 --repeats 1 --eval_batch_size 10
 bash quickstart.sh eval bench all            # 全部（默认不含 aime25 / swe_bench_pro，需显式指定）

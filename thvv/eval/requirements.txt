@@ -36,6 +36,10 @@ jsonlines==4.0.0
 tqdm==4.67.3
 nltk==3.9.4
 
+# 多模态 caption 评分（msr_vtt 的 CIDEr/BLEU/METEOR/ROUGE）
+pycocoevalcap==1.2
+pycocotools==2.0.11
+
 # 通用
 aiohttp==3.14.1
 jsonschema==4.17.3

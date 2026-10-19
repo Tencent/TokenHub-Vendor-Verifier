@@ -2,7 +2,7 @@
 """
 evalscope 通用效果评测脚本
 
-支持 11 个数据集的 LLM 精度评测，基于 evalscope 框架。
+支持 17 个数据集（含 6 个视频/图像多模态数据集）的 LLM 精度评测，基于 evalscope 框架。
 包含预检查、限流重试、HTML 报告生成、结果打包。
 
 用法示例:
@@ -174,7 +174,94 @@ SUPPORTED_DATASETS = {
         'requires_ms_enclave': True,
         'description': 'SWE-Bench Pro 软件工程评测（需要 Docker + ms_enclave）',
     },
+    # ---- 多模态（视频/图像）数据集 ----
+    'msr_vtt': {
+        'label': 'msr_vtt',
+        'default_repeats': 1,
+        'default_eval_batch_size': 5,
+        'judge_strategy': 'auto',
+        'requires_judge_model': False,
+        'multimodal': 'video',
+        'description': 'MSR-VTT 视频描述评测（CIDEr/BLEU/METEOR/ROUGE）',
+    },
+    'mvbench': {
+        'label': 'mvbench',
+        'default_repeats': 1,
+        'default_eval_batch_size': 5,
+        'judge_strategy': 'auto',
+        'requires_judge_model': False,
+        'multimodal': 'video',
+        'description': 'MVBench 视频理解多选题评测（20 子集，默认 action_antonym）',
+    },
+    'tvbench': {
+        'label': 'tvbench',
+        'default_repeats': 1,
+        'default_eval_batch_size': 5,
+        'judge_strategy': 'auto',
+        'requires_judge_model': False,
+        'multimodal': 'video',
+        'description': 'TVBench 时序视频理解多选题评测（10 子集，默认 action_count）',
+    },
+    'math_vision': {
+        'label': 'math_vision',
+        'default_repeats': 1,
+        'default_eval_batch_size': 10,
+        'judge_strategy': 'auto',
+        'requires_judge_model': False,
+        'multimodal': 'image',
+        'description': 'MathVision 数学视觉推理评测（图像）',
+    },
+    'hallusion_bench': {
+        'label': 'hallusion_bench',
+        'default_repeats': 1,
+        'default_eval_batch_size': 10,
+        'judge_strategy': 'auto',
+        'requires_judge_model': False,
+        'multimodal': 'image',
+        'description': 'HallusionBench 幻觉检测评测（aAcc/qAcc/fAcc）',
+    },
+    'videomme_v2': {
+        'label': 'videomme_v2',
+        'default_repeats': 1,
+        'default_eval_batch_size': 5,
+        'judge_strategy': 'auto',
+        'requires_judge_model': False,
+        'multimodal': 'video',
+        'description': 'Video-MME-v2 视频理解多选题评测（800 视频 / 3200 QA）',
+    },
 }
+
+# 多模态视频数据集完整子集列表（用于 --mvbench_subset all / --tvbench_subset all 展开）
+_MVBENCH_SUBSETS = [
+    'action_antonym', 'action_count', 'action_localization', 'action_prediction',
+    'action_sequence', 'character_order', 'counterfactual_inference',
+    'egocentric_navigation', 'episodic_reasoning', 'fine_grained_action',
+    'fine_grained_pose', 'moving_attribute', 'moving_count', 'moving_direction',
+    'object_existence', 'object_interaction', 'object_shuffle', 'scene_transition',
+    'state_change', 'unexpected_action',
+]
+_TVBENCH_SUBSETS = [
+    'action_antonym', 'action_count', 'action_localization', 'action_sequence',
+    'egocentric_sequence', 'moving_direction', 'object_count', 'object_shuffle',
+    'scene_transition', 'unexpected_action',
+]
+_VIDEOMME_V2_SUBSETS = ['all', 'level_1', 'level_2', 'level_3', 'logic', 'relevance']
+
+
+def _resolve_subset_list(dataset_key, subset_arg):
+    """把 --xxx_subset 参数解析成 subset_list；支持 'all' 展开，未指定返回 None。"""
+    if not subset_arg:
+        return None
+    tokens = [s.strip() for s in subset_arg.split(',') if s.strip()]
+    if not tokens:
+        return None
+    if 'all' in tokens:
+        if dataset_key == 'mvbench':
+            return list(_MVBENCH_SUBSETS)
+        if dataset_key == 'tvbench':
+            return list(_TVBENCH_SUBSETS)
+    return tokens
+
 
 _SANDBOX_DATASET_PREFIXES = ('swe_bench',)
 _DOCKER_DATASET_PREFIXES = ('swe_bench', 'live_code_bench')
@@ -537,9 +624,16 @@ def default_dataset_dir():
 def build_eval_command(args, dataset_key, run_dir=None):
     """为指定数据集构建 evalscope eval 命令。返回 (cmd_list, output_dir)"""
     ds_config = get_dataset_config(dataset_key)
+    is_multimodal = bool(ds_config.get('multimodal'))
 
-    max_tokens = args.max_tokens if args.max_tokens is not None else get_max_tokens(
-        args.model_name, args.thinking
+    # 多模态（视频/图像）数据集默认关闭思考模式（视觉理解模型大多不支持 thinking）；
+    # 输出上限收敛到 8192 —— glm-5.3-flashx / kimi-k3 等强制思考模型即使不传 thinking
+    # 也会输出 reasoning_content，2048 会被思考耗尽导致最终答案 text 为空（tvbench 0 分
+    # 实锤）。8192 给「思考 + 答案」留足空间，对非思考模型也无害（答完即 stop）。
+    # 用户仍可用 --max_tokens 显式覆盖。
+    effective_thinking = args.thinking and not is_multimodal
+    max_tokens = args.max_tokens if args.max_tokens is not None else (
+        get_max_tokens(args.model_name, effective_thinking) if not is_multimodal else 8192
     )
     repeats = args.repeats if args.repeats is not None else ds_config['default_repeats']
     eval_batch_size = (args.eval_batch_size if args.eval_batch_size is not None
@@ -570,7 +664,7 @@ def build_eval_command(args, dataset_key, run_dir=None):
     if args.top_p is not None:
         gen_config["top_p"] = float(args.top_p)
     thinking_type = resolve_thinking_type(
-        args.provider, args.model_name, args.thinking,
+        args.provider, args.model_name, effective_thinking,
         getattr(args, "thinking_type", None),
     )
     if thinking_type:
@@ -596,6 +690,9 @@ def build_eval_command(args, dataset_key, run_dir=None):
     dataset_dir = args.dataset_dir or default_dataset_dir()
     if dataset_dir:
         cmd.extend(['--dataset-dir', dataset_dir])
+    # 数据集源：默认 evalscope 推断（msr_vtt 为 modelscope）；本地视频集需切 huggingface
+    if args.dataset_hub:
+        cmd.extend(['--dataset-hub', args.dataset_hub])
 
     dataset_args = {}
 
@@ -651,6 +748,31 @@ def build_eval_command(args, dataset_key, run_dir=None):
         subsets = [s.strip() for s in args.longbench_v2_subset.split(',') if s.strip()]
         if subsets:
             dataset_args.setdefault('longbench_v2', {})['subset_list'] = subsets
+
+    # 多模态视频数据集子集（支持 all 展开）
+    if dataset_key == 'mvbench':
+        subsets = _resolve_subset_list('mvbench', args.mvbench_subset)
+        if subsets:
+            dataset_args.setdefault('mvbench', {})['subset_list'] = subsets
+    if dataset_key == 'tvbench':
+        subsets = _resolve_subset_list('tvbench', args.tvbench_subset)
+        if subsets:
+            dataset_args.setdefault('tvbench', {})['subset_list'] = subsets
+    if dataset_key == 'videomme_v2':
+        subsets = _resolve_subset_list('videomme_v2', args.videomme_v2_subset)
+        if subsets:
+            dataset_args.setdefault('videomme_v2', {})['subset_list'] = subsets
+        # 默认用 archive 视频源（下载官方 MP4 归档转 base64），
+        # 避免 url 源（YouTube/Google Drive）在网关上无法访问导致 400。
+        dataset_args.setdefault('videomme_v2', {}).setdefault('extra_params', {})['video_source'] = 'archive'
+
+    # msr_vtt：优先用本地视频目录（video_dir）绕过 YouTube URL 源
+    if dataset_key == 'msr_vtt':
+        msr_extra = dataset_args.setdefault('msr_vtt', {}).setdefault('extra_params', {})
+        if args.msr_vtt_video_dir:
+            msr_extra['video_dir'] = args.msr_vtt_video_dir
+        if args.msr_vtt_video_extension:
+            msr_extra['video_extension'] = args.msr_vtt_video_extension
 
     # live_code_bench release 子集
     if dataset_key == 'live_code_bench':
@@ -1151,6 +1273,16 @@ def parse_args():
                         help='mmlu_pro 学科子集')
     parser.add_argument('--longbench_v2_subset', default=None, type=str,
                         help='longbench_v2 长度子集: short,medium,long')
+    parser.add_argument('--mvbench_subset', default=None, type=str,
+                        help='mvbench 视频子集（逗号分隔或 all），默认 action_antonym（冒烟）')
+    parser.add_argument('--tvbench_subset', default=None, type=str,
+                        help='tvbench 视频子集（逗号分隔或 all），默认 action_count（冒烟）')
+    parser.add_argument('--videomme_v2_subset', default=None, type=str,
+                        help='videomme_v2 子集: all,level_1,level_2,level_3,logic,relevance')
+    parser.add_argument('--msr_vtt_video_dir', default=None, type=str,
+                        help='msr_vtt 本地视频目录（文件名需匹配 video_id，绕过 YouTube URL 源）')
+    parser.add_argument('--msr_vtt_video_extension', default=None, type=str,
+                        help='msr_vtt 本地视频扩展名覆盖（如 mp4）')
     parser.add_argument('--live_code_bench_subset', default=None, type=str,
                         help='live_code_bench release 子集')
     parser.add_argument('--live_code_bench_start_date', default=None, type=str)
@@ -1160,6 +1292,8 @@ def parse_args():
                         help='Docker Sandbox 配置（JSON）')
     parser.add_argument('--dataset_dir', default=os.environ.get('EVAL_DATASET_DIR'), type=str,
                         help='本地数据集缓存目录，默认 eval/datasets')
+    parser.add_argument('--dataset_hub', default=None, type=str,
+                        help='数据集源：modelscope / huggingface（msr_vtt 用本地视频需 huggingface）')
     parser.add_argument('--use_cache', default=None, type=str, help='缓存续跑路径')
     parser.add_argument('--output_dir', default=None, type=str, help='输出目录')
     parser.add_argument('--debug', action='store_true', help='开启 debug 模式')
@@ -1253,7 +1387,8 @@ def main():
 
         _print_banner(f"📊 [{ds_config['label']}] {ds_config['description']}")
 
-        max_tok = args.max_tokens or get_max_tokens(args.model_name, args.thinking)
+        is_mm = bool(ds_config.get('multimodal'))
+        max_tok = args.max_tokens or (8192 if is_mm else get_max_tokens(args.model_name, args.thinking))
         repeats = args.repeats or ds_config['default_repeats']
         ebs = args.eval_batch_size or ds_config['default_eval_batch_size']
         judge = args.judge_strategy or ds_config['judge_strategy']
@@ -1263,6 +1398,8 @@ def main():
         print(f"  MaxTokens:  {max_tok}")
         print(f"  Repeats:    {repeats}")
         print(f"  并发数:     {ebs}")
+        if is_mm:
+            print(f"  模态:       {ds_config['multimodal']}（多模态数据集，默认关闭思考模式）")
         if ds_key in ('hle', 'simple_qa'):
             print(f"  Judge模型:  {args.judge_model}")
         if ds_key == 'tau2_bench' and args.subset_list:

@@ -28,6 +28,10 @@ set -eu
 KIT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$KIT_DIR"
 
+# 注入 sitecustomize 兼容补丁：修复 transformers 5.x 下 apply_chat_template 返回
+# BatchEncoding 导致的 evalscope token 计数错误（produced no conversations）
+export PYTHONPATH="$KIT_DIR/scripts${PYTHONPATH:+:$PYTHONPATH}"
+
 # .env 在项目根目录 configs/ 下（perf 的上一级）
 ROOT_DIR="$(cd "$KIT_DIR/.." && pwd)"
 

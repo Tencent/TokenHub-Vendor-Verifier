@@ -267,7 +267,7 @@ main() {
             echo "    bench <bucket> [N] [P]   单档压测"
             echo "    bench-all                全档位 × 并发梯度"
             echo "    report                   生成报告"
-            echo "  eval         效果评测（11 个数据集：AIME/GPQA/HLE/MMLU-Pro/...）"
+            echo "  eval         效果评测（17 个数据集：AIME/GPQA/HLE/MMLU-Pro/MSR-VTT/MVBench/...）"
             echo "    bench <datasets>         单/多数据集评测（如 aime25,gpqa_diamond）"
             echo "    list                     列出支持的数据集"
             echo ""
