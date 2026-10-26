@@ -13,7 +13,7 @@
 # P        = 并发数，默认 10
 #
 # bench-all 环境变量：
-#   BUCKETS             档位列表，默认 "1k 9k 16k 32k 64k 128k 200k"
+#   BUCKETS             档位列表，默认 "1k 9k 16k 32k 64k 128k 200k 512k 1m"
 #   CONCURRENCY_LADDER  并发梯度，默认 "1 8 32 64 128"
 #   BUCKET_COOLDOWN     档间冷却秒数，默认 120
 #   N_<label>           覆盖特定档位的请求数（如 N_1k=20 N_9k=100）
@@ -321,7 +321,7 @@ cmd_bench_all() {
     auto_detect_tokenizer
     ensure_tokenizer_cached
 
-    local buckets="${BUCKETS:-1k 9k 16k 32k 64k 128k 200k}"
+    local buckets="${BUCKETS:-1k 9k 16k 32k 64k 128k 200k 512k 1m}"
     local conc_ladder="${CONCURRENCY_LADDER:-1 8 32 64 128}"
     local cooldown="${BUCKET_COOLDOWN:-120}"
     # 成功率早停阈值（百分比，默认 0=关闭；设为非 0 值如 99.9 开启）

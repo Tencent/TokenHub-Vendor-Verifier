@@ -15,3 +15,6 @@ thvv/cache/logs/
 # 压测数据集共 2.7GB：不走普通 Git 对象，改由 Git LFS 管理（见 .gitattributes 的 *.jsonl track 规则）
 # 运行日志（临时产物）
 *.log
+
+# 语料池缓存（可由 scripts/fetch_wiki_pool.py 重建）
+thvv/perf/.cache/

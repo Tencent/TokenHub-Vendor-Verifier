@@ -31,7 +31,11 @@
 │   ├── gen_perf_dashboard.py     # HTML 报告唯一出口：性能测试报告.html
 │   ├── gen_report_from_db.py     # 38 列 Excel 指标报告：性能测试报告.xlsx
 │   ├── export_failure_details.py # （手动工具）失败请求 CSV 导出
-│   └── sla_eval.py               # （手动工具）SLA 验收评估：TTFT P50/P90 分档阈值 + 吞吐下限判定
+│   ├── sla_eval.py               # （手动工具）SLA 验收评估：TTFT P50/P90 分档阈值 + 吞吐下限判定
+│   ├── sanitize_dataset.py       # 敏感内容扫描/脱敏/整段替换（report / mask / replace / drop）
+│   ├── audit_dataset.py          # 数据集独立复核（L1 原样 / L2 去空白 / L3 去标点 + 质量检查）
+│   ├── fetch_wiki_pool.py        # 从中文维基抽取干净文本块，构建超长档位语料池
+│   └── build_long_bucket.py      # 生成 512k / 1m 超长档位数据集（按 tokenizer 实测 token 拼接）
 └── results/                      # 压测产物（自动创建，已由 .gitignore 排除）
 ```
 
@@ -188,8 +192,29 @@ python3 scripts/gen_report_from_db.py --results-dir results --client "供应商�
 | 64k  | 507 MB | 56,000–72,000 tokens |
 | 128k | 1.0 GB | 112,000–144,000 tokens |
 | 200k | 567 MB | 180,000–220,000 tokens |
+| 512k | 325 MB | 512,010–513,546 tokens（200 条） |
+| 1m   | 317 MB | 1,000,007–1,001,367 tokens（100 条） |
 
-> `datasets/` 是真实目录，已内置 7 档主数据共 2.6GB，开箱即用。如需更换数据源，直接覆盖 `datasets/*.jsonl` 即可。
+> `datasets/` 是真实目录，已内置各档主数据共 3.2GB，开箱即用。如需更换数据源，直接覆盖 `datasets/*.jsonl` 即可。
+
+### 超长档位（512k / 1m）
+
+两档不来自原有语料，改为从中文维基百科重新构建，避免长文本反复拼接同一批段落：
+`generated from wikimedia/wikipedia 20231101.zh` → 按句切块、去重、丢弃敏感块 → 按 tokenizer
+实测 token 数累加到目标长度（字符数估算会偏 30%+，现有语料 chars/token 在 1.04~2.0 之间波动）。
+
+```bash
+# 1) 抽取干净语料池（400M 字符，约 5 分钟，产物 .cache/ 不入库）
+python3 scripts/fetch_wiki_pool.py --pool-chars 400000000
+# 2) 生成两档（token 精度 ±0.1%，跨样本块重复率 0%）
+python3 scripts/build_long_bucket.py --pool-file .cache/wiki_zh_pool.jsonl \
+    --buckets 512k 1m --count 200 100
+```
+
+实测：池 318,820 块 / 400M 字符（丢弃敏感块 80,284）；512k 均值 512,505 token，1m 均值 1,000,565 token；
+复核 L1/L2 均为 0 命中。语料来源与许可（CC BY-SA 4.0）见 `SOURCE.md`。
+
+> 1M token 远超常见模型上下文（GLM-4.6 为 128k），用于测长上下文承载与截断行为，模型侧拒绝属预期。
 
 ### 敏感内容脱敏（重要）
 
