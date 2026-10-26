@@ -15,6 +15,8 @@
 # bench-all 环境变量：
 #   BUCKETS             档位列表，默认 "1k 9k 16k 32k 64k 128k 200k 512k 1m"
 #   CONCURRENCY_LADDER  并发梯度，默认 "1 8 32 64 128"
+#   TPM_BUDGET          TPM 预算（tokens/min），默认 10000000。按「单条 token × 并发」裁剪并发阶梯，
+#                       请求数也不超过该档可用并发数；某档连并发 1 都超预算则整档跳过。0 = 不限制。
 #   BUCKET_COOLDOWN     档间冷却秒数，默认 120
 #   N_<label>           覆盖特定档位的请求数（如 N_1k=20 N_9k=100）
 #   SUCCESS_RATE_MIN    成功率早停阈值（百分比，默认 0=关闭）；
@@ -174,7 +176,25 @@ bucket_range() {
         64k)  echo "56000 72000" ;;
         128k) echo "112000 144000" ;;
         200k) echo "180000 220000" ;;
+        512k) echo "500000 540000" ;;
+        1m)   echo "980000 1030000" ;;
         *) echo "0 999999" ;;
+    esac
+}
+
+# ---- 档位单条 token 估算（取区间上界，保守）----
+bucket_tokens() {
+    local r=($(bucket_range "$1"))
+    echo "${r[1]}"
+}
+
+# ---- 档位并发上限（按实测上下文/TPM 能力约定，超出的并发阶梯不跑）----
+bucket_max_parallel() {
+    case "$1" in
+        128k|200k) echo 64 ;;   # 128 并发删掉
+        512k)      echo 32 ;;   # 64/128 删掉
+        1m)        echo 8 ;;    # 32/64/128 删掉
+        *)         echo 128 ;;
     esac
 }
 
@@ -323,6 +343,11 @@ cmd_bench_all() {
 
     local buckets="${BUCKETS:-1k 9k 16k 32k 64k 128k 200k 512k 1m}"
     local conc_ladder="${CONCURRENCY_LADDER:-1 8 32 64 128}"
+    # TPM 预算（tokens/min）：按「单条 token × 并发」估算每分钟 token 消耗，
+    # 超过预算的并发阶梯直接裁掉；某档连并发 1 都超预算则整档跳过。
+    # 默认 1000 万（用户口径）；0 = 不限制。
+    # 按被测网关实际 TPM 设置，例如 TokenHub minimax-m3.1-flash 为 100 万。
+    local tpm_budget="${TPM_BUDGET:-0}"
     local cooldown="${BUCKET_COOLDOWN:-120}"
     # 成功率早停阈值（百分比，默认 0=关闭；设为非 0 值如 99.9 开启）
     # 参考 benjaminswu-perf 分支：某档并发跑完后成功率低于阈值 → 跳过该 bucket 剩余并发
@@ -359,13 +384,34 @@ cmd_bench_all() {
             continue
         fi
 
+        # 并发上限 = 档位能力约定（bucket_max_parallel），若启用 TPM 预算则取更小者
+        local once_tokens=$(bucket_tokens "$label")
+        local max_par=$(bucket_max_parallel "$label")
+        local tpm_par=999999
+        if [[ "$tpm_budget" -gt 0 ]]; then
+            tpm_par=$(( tpm_budget / once_tokens ))
+            [[ $tpm_par -lt $max_par ]] && max_par=$tpm_par
+        fi
+        local -a cur_conc=()
+        for p in "${conc_arr[@]}"; do
+            [[ $p -le $max_par ]] && cur_conc+=("$p")
+        done
+        if [[ ${#cur_conc[@]} -eq 0 ]]; then
+            tlog "⏭ [$label] 并发上限 ${max_par}（单条 ${once_tokens} token，TPM 预算 ${tpm_budget}/min）低于梯度最小值，跳过该档位"
+            continue
+        fi
+
         tlog ""
-        tlog "========== [$idx/$total] bucket=$label  并发梯度: ${conc_arr[*]} (早停阈值: 成功率<${sr_min}%) =========="
+        tlog "========== [$idx/$total] bucket=$label  并发梯度: ${cur_conc[*]}（单条 ${once_tokens} token，并发上限 ${max_par}）(早停阈值: 成功率<${sr_min}%) =========="
 
         local bucket_stopped=0
-        for p in "${conc_arr[@]}"; do
+        for p in "${cur_conc[@]}"; do
             local n_var="N_${label}"
             local n="${!n_var:-$(parallel_number "$p")}"
+            # 仅在启用 TPM 预算时，请求数才按单分钟可发条数收敛（显式 N_<label> 优先）
+            if [[ -z "${!n_var:-}" && "$tpm_budget" -gt 0 && $n -gt $tpm_par ]]; then
+                n=$tpm_par
+            fi
 
             tlog "---------- [bucket=$label parallel=$p number=$n] ----------"
 
