@@ -189,7 +189,65 @@ python3 scripts/gen_report_from_db.py --results-dir results --client "供应商�
 | 128k | 1.0 GB | 112,000–144,000 tokens |
 | 200k | 567 MB | 180,000–220,000 tokens |
 
-> `datasets/` 是真实目录，已内置 10 个数据集（7 档主数据 + 3 个缓存场景）共 3.2GB，开箱即用。如需更换数据源，直接覆盖 `datasets/*.jsonl` 即可。
+> `datasets/` 是真实目录，已内置 7 档主数据共 2.6GB，开箱即用。如需更换数据源，直接覆盖 `datasets/*.jsonl` 即可。
+
+### 敏感内容脱敏（重要）
+
+原始语料来自真实中文网页/文档（法规、百科、产品手册、新闻等），夹带涉政/涉台、翻墙、赌博、色情等内容，
+压测时会被供应商内容安全策略拦截（如 HTTP 400 `data_inspection_failed`），**把内容审核失败算成压测失败，
+虚降成功率并污染结论**。实测命中率随输入长度陡增：
+
+| 档位 | 1k | 9k | 16k | 32k | 64k | 128k | 200k |
+|---|---|---|---|---|---|---|---|
+| 命中行占比 | 6.8% | 22.9% | 45.0% | 66.1% | 87.4% | 98.0% | 99.6% |
+| 替换处数 | 452 | 2,627 | 5,076 | 9,592 | 20,065 | 39,667 | 21,429 |
+
+> 注意：语料是 PDF/网页抓取产物，存在大量「选 举」「中 华 民 国」这种**字间插空格**的排版，
+> 直接字符串匹配会大面积漏检。清洗与复核都开词内空白容忍（`--no-space-tolerant` 可关）。
+
+工具：`scripts/sanitize_dataset.py` + 词表 `scripts/sensitive_words.txt`（可自行增删词）。
+
+当前 `datasets_clean/` 由 `replace` 模式生成：命中片段整段替换为**从干净语料池（1k/9k/16k 中未命中的句段）取出的等长自然文本**，
+不是打码；行数、字符数、token 长度分布完全不变，读起来仍是正常中文/英文词。
+
+```bash
+# 仅统计风险面（不写文件）
+python3 scripts/sanitize_dataset.py report --buckets 1k 9k
+
+# 整段替换为干净语料（推荐，当前 datasets_clean/ 即此模式产出）
+python3 scripts/sanitize_dataset.py replace --out-dir datasets_clean
+
+# 等长打码（命中词 -> 中性填充文本）
+python3 scripts/sanitize_dataset.py mask --out-dir datasets_masked
+
+# 丢弃命中行（长档位命中率过高，一般不推荐）
+python3 scripts/sanitize_dataset.py drop --buckets 1k
+```
+
+> 词表同时收录简体与繁体变体（语料里有台湾法规等繁体条目），新增词直接追加到 `scripts/sensitive_words.txt` 后重跑 `replace` 即可。
+
+复核用独立脚本（不与清洗逻辑共用实现）：
+
+```bash
+python3 scripts/audit_dataset.py --in-dir datasets_clean        # 全量
+python3 scripts/audit_dataset.py --in-dir datasets_clean --buckets 128k --limit 100
+```
+
+三级口径：L1 原样匹配 / L2 去空白后匹配（查「选 举」这类排版）/ L3 去标点后匹配（查「国、会」这类，跨词拼接误报偏高）。
+另附语料质量检查：JSON 坏行、空内容、控制字符、超长同字重复（用于确认替换没有引入新问题）。
+
+当前 `datasets_clean/` 复核结果（12788 行全量）：L1 = 0，L2 = 0，L3 = 435 行（3.4%，均为跨标点拼接，
+如「全国、会议」被判成 `国会`，模型审核不会命中）；控制字符与超长重复行数与原始语料完全一致（284 / 993 @128k），
+说明替换未引入新的质量问题。
+
+`run.sh` 默认优先使用 `datasets_clean/`，缺失时回落 `datasets/`；也可显式指定：
+
+```bash
+DATASET_DIR=datasets bash run.sh bench 128k 500 128   # 用原始语料
+DATASET_DIR=datasets_clean bash run.sh bench 128k 500 128
+```
+
+> 压测只关心 token 长度与吞吐，脱敏不改变语义也不改变长度分布，对压测指标无影响。
 
 ---
 

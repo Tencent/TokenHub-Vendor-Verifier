@@ -48,6 +48,16 @@ load_env() {
 
 load_env
 
+# 数据集目录：默认优先 datasets_clean/（已脱敏，避免供应商内容安全拦截污染成功率），
+# 不存在时回落到 datasets/（原始真实语料，含敏感内容）。
+# 可用 DATASET_DIR=<目录> 显式指定。
+if [[ -d "datasets_clean" ]]; then
+    _DEFAULT_DATASET_DIR="datasets_clean"
+else
+    _DEFAULT_DATASET_DIR="datasets"
+fi
+DATASET_DIR="${DATASET_DIR:-$_DEFAULT_DATASET_DIR}"
+
 # 统一变量名：API_URL / API_KEY / MODEL_NAME
 API_URL="${API_URL:-${TOKENHUB_URL:-}}"
 API_KEY="${API_KEY:-${TOKENHUB_KEY:-}}"
@@ -184,10 +194,10 @@ cmd_check() {
     else
         echo "  [warn] TOKENIZER 未设置，请在 configs/.env 中指定 tokenizer 仓库名"
     fi
-    echo "[check] datasets..."
+    echo "[check] datasets... (DATASET_DIR=$DATASET_DIR)"
     for f in 1k 9k 16k 32k 64k 128k 200k; do
-        if [[ -f "datasets/perf_zh_${f}.jsonl" ]]; then
-            sz=$(du -h "datasets/perf_zh_${f}.jsonl" | cut -f1)
+        if [[ -f "${DATASET_DIR}/perf_zh_${f}.jsonl" ]]; then
+            sz=$(du -h "${DATASET_DIR}/perf_zh_${f}.jsonl" | cut -f1)
             echo "  OK: perf_zh_${f}.jsonl ($sz)"
         else
             echo "  [warn] 缺失: datasets/perf_zh_${f}.jsonl"
@@ -214,7 +224,7 @@ cmd_bench() {
     local bucket="$1"
     local n="${2:-500}"
     local p="${3:-10}"
-    local ds="datasets/perf_zh_${bucket}.jsonl"
+    local ds="${DATASET_DIR}/perf_zh_${bucket}.jsonl"
     [[ ! -f "$ds" ]] && { echo "数据集不存在: $ds"; exit 1; }
     [[ -z "$API_KEY" ]] && { echo "[fail] API_KEY 未设置，请编辑 configs/.env"; exit 1; }
     [[ -z "$API_URL" ]] && { echo "[fail] API_URL 未设置，请编辑 configs/.env"; exit 1; }
@@ -343,7 +353,7 @@ cmd_bench_all() {
 
     for label in "${bucket_arr[@]}"; do
         idx=$((idx+1))
-        local ds="datasets/perf_zh_${label}.jsonl"
+        local ds="${DATASET_DIR}/perf_zh_${label}.jsonl"
         if [[ ! -f "$ds" ]]; then
             tlog "⚠ [$label] 数据集不存在: $ds，跳过"
             continue

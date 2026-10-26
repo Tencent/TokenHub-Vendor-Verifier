@@ -1,0 +1,112 @@
+# 压测数据集敏感词表（内容审核风险词）
+# 格式：每行一条  "<词>[,<类别>]"，# 开头为注释，空行忽略
+# 用途：仅用于压测语料的合规脱敏，避免供应商内容安全拦截（如 data_inspection_failed）污染成功率
+# 维护：直接追加自己的词即可，类别可省略（默认 uncategorized）
+
+# ---- 网络翻墙类 ----
+VPN,circumvention
+翻墙,circumvention
+代理上网,circumvention
+Shadowsocks,circumvention
+shadowsocks,circumvention
+V2Ray,circumvention
+v2ray,circumvention
+Tor 浏览器,circumvention
+翻墙软件,circumvention
+破网,circumvention
+
+# ---- 赌博博彩类 ----
+赌博,gambling
+赌场,gambling
+博彩,gambling
+六合彩,gambling
+网赌,gambling
+赌球,gambling
+德州扑克,gambling
+
+# ---- 色情低俗类 ----
+色情,porn
+情色,porn
+成人影片,porn
+色情影片,porn
+三级片,porn
+AV 影片,porn
+援交,porn
+
+# ---- 毒品类 ----
+毒品,drugs
+吸毒,drugs
+贩毒,drugs
+海洛因,drugs
+冰毒,drugs
+大麻,drugs
+可卡因,drugs
+摇头丸,drugs
+
+# ---- 暴力暴恐类 ----
+炸药,violence
+炸弹,violence
+爆炸物,violence
+枪支,violence
+杀人,violence
+恐怖袭击,violence
+自杀,violence
+
+# ---- 分裂/邪教/违法有害类 ----
+法轮功,illegal
+falun,illegal
+台独,illegal
+疆独,illegal
+藏独,illegal
+达赖,illegal
+东突,illegal
+
+# ---- 涉台/涉政表述（按需要自行增删）----
+中华民国,politics
+總統令,politics
+总统令,politics
+立法院,politics
+行政院,politics
+国会,politics
+选举,politics
+
+# ---- 繁体变体（语料中的台湾法规/繁体条目）----
+中華民國,politics
+總統,politics
+總統令,politics
+國會,politics
+選舉,politics
+立法院,politics
+行政院,politics
+賭博,gambling
+賭場,gambling
+博彩,gambling
+六合彩,gambling
+網賭,gambling
+賭球,gambling
+色情,porn
+情色,porn
+三級片,porn
+毒品,drugs
+吸毒,drugs
+海洛因,drugs
+冰毒,drugs
+大麻,drugs
+可卡因,drugs
+炸彈,violence
+爆炸物,violence
+槍支,violence
+殺人,violence
+恐怖襲擊,violence
+自殺,violence
+法輪功,illegal
+臺獨,illegal
+藏獨,illegal
+疆獨,illegal
+達賴,illegal
+東突,illegal
+翻牆,circumvention
+破網,circumvention
+代理上網,circumvention
+
+# ---- 其他：自行补充 ----
