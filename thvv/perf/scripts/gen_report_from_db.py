@@ -308,8 +308,8 @@ def find_run_dirs(results_root: Path):
             # 解析 vendor 和 bucket（约定：<vendor>-<bucket>-<timestamp>...）
             tag_parts = run_tag.split("-")
             vendor = tag_parts[0]
-            # 找第一个像 1k/9k/16k/50k 的 token
-            bucket = next((p for p in tag_parts if re.fullmatch(r"\d+k", p)), "?")
+            # 找第一个像 1k/9k/16k/200k/512k/1m 的 token（k 与 m 两种单位）
+            bucket = next((p for p in tag_parts if re.fullmatch(r"\d+[km]", p)), "?")
             runs.append((run_tag, db, vendor, bucket, parallel))
         except Exception:
             continue

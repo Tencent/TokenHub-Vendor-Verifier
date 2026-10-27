@@ -98,7 +98,7 @@ def find_run_dirs(results_root: Path) -> list[tuple[str, Path, str, str, int]]:
             parallel = int(m.group(1)) if m else 0
             tag_parts = run_tag.split("-")
             vendor = tag_parts[0]
-            bucket = next((p for p in tag_parts if re.fullmatch(r"\d+k", p)), "?")
+            bucket = next((p for p in tag_parts if re.fullmatch(r"\d+[km]", p)), "?")
             runs.append((run_tag, db, vendor, bucket, parallel))
         except Exception:
             continue
