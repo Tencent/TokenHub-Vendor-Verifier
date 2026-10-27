@@ -22,6 +22,9 @@
 #   SUCCESS_RATE_MIN    成功率早停阈值（百分比，默认 0=关闭）；
 #                       某档并发跑完后成功率低于此值时，跳过该 bucket 剩余更高并发，
 #                       直接切到下一个 bucket。设为 0 可关闭早停。
+#   DATASET_TOKENIZER   超长档位（512k/1m）计数/过滤用的分词器，默认 zai-org/GLM-4.6
+#                       （与数据集构建一致）。仅影响 512k/1m，其它档位仍按 TOKENIZER/MODEL_NAME。
+#                       未设置时若显式设置了 TOKENIZER，则这两档沿用该 TOKENIZER。
 #
 # 配置：cp configs/env.example configs/.env 后填写（支持任意 OpenAI 兼容端点）
 # ============================================================
@@ -119,6 +122,31 @@ auto_detect_tokenizer() {
     fi
 }
 
+# 超长档位（512k/1m）数据集是用 GLM-4.6 分词器构建并按固定区间（见 bucket_range）过滤的。
+# 若压测时按被测模型自动换成别家分词器（如 DeepSeek-V3，对中文计数会少数个百分点），
+# 样本会整体落到区间下限以下，被全部过滤，报 "produced no conversations"。
+# 因此这些档位的 token 计数/过滤固定使用数据集构建时的分词器，与被测模型无关。
+# 优先级：DATASET_TOKENIZER（显式指定）> 用户显式设置的 TOKENIZER > 默认 GLM-4.6。
+LONG_BUCKETS="512k 1m"
+DATASET_TOKENIZER_DEFAULT="zai-org/GLM-4.6"
+
+bucket_tokenizer() {
+    local bucket="$1" b
+    for b in $LONG_BUCKETS; do
+        if [[ "$bucket" == "$b" ]]; then
+            if [[ -n "${DATASET_TOKENIZER:-}" ]]; then
+                echo "$DATASET_TOKENIZER"
+            elif [[ -n "$_TOKENIZER_USER" ]]; then
+                echo "$TOKENIZER"
+            else
+                echo "$DATASET_TOKENIZER_DEFAULT"
+            fi
+            return 0
+        fi
+    done
+    echo "$TOKENIZER"
+}
+
 # ---- 检测并安装缺失依赖 ----
 ensure_perf_deps() {
     local missing=()
@@ -145,10 +173,12 @@ ensure_perf_deps() {
 # ---- 检测 tokenizer 本地缓存，未缓存则自动下载 ----
 # 用户无需手动执行 setup_tokenizer.py；首次压测时自动从 HuggingFace / ModelScope 下载
 ensure_tokenizer_cached() {
-    [[ -z "$TOKENIZER" ]] && return 0
+    # 可选参数 $1：指定要检查的 tokenizer；缺省为全局 $TOKENIZER
+    local tok="${1:-$TOKENIZER}"
+    [[ -z "$tok" ]] && return 0
     # 用 local_files_only=True 探测；命中则直接返回，未命中则触发下载
-    python3 - "$TOKENIZER" "$KIT_DIR/scripts/setup_tokenizer.py" <<'PY'
-import sys, os
+    python3 - "$tok" "$KIT_DIR/scripts/setup_tokenizer.py" <<'PY'
+import sys, os, subprocess
 tok_name = sys.argv[1]
 setup_script = sys.argv[2]
 try:
@@ -157,8 +187,8 @@ try:
     print(f"  [tokenizer] 已缓存: {tok_name}")
 except Exception:
     print(f"  [tokenizer] 未缓存，开始下载 {tok_name} ...")
-    # 调用 setup_tokenizer.py 完成下载 + 注入 chat_template
-    ret = os.system(f"python3 '{setup_script}'")
+    # 调用 setup_tokenizer.py 完成下载 + 注入 chat_template（显式传入目标 tokenizer 名）
+    ret = subprocess.call(["python3", setup_script], env={**os.environ, "TOKENIZER": tok_name})
     if ret != 0:
         print(f"  [tokenizer] 下载失败，请检查网络或手动执行: python3 {setup_script}", file=sys.stderr)
         sys.exit(1)
@@ -252,19 +282,24 @@ cmd_bench() {
 
     local range=($(bucket_range "$bucket"))
     local minlen=${range[0]} maxlen=${range[1]}
+    local tok; tok=$(bucket_tokenizer "$bucket")
+    if [[ "$tok" != "$TOKENIZER" ]]; then
+        echo "[info] 档位 $bucket 使用数据集构建分词器: $tok（模型分词器: $TOKENIZER）" >&2
+        ensure_tokenizer_cached "$tok"
+    fi
     local ts=$(date +%Y%m%d-%H%M)
     local out="results/perf-${bucket}-${ts}"
     mkdir -p "$out"
 
     echo "[bench] model=$MODEL_NAME bucket=$bucket parallel=$p number=$n"
     echo "        url=$API_URL"
-    echo "        tokenizer=$TOKENIZER"
+    echo "        tokenizer=$tok"
     echo "        out=$out"
     echo ""
 
     evalscope perf \
         --model "$MODEL_NAME" --api "$PROTOCOL" \
-        --tokenizer-path "$TOKENIZER" \
+        --tokenizer-path "$tok" \
         --url "$API_URL" --api-key "$API_KEY" \
         --temperature "$TEMPERATURE" \
         --parallel "$p" --number "$n" \
@@ -404,6 +439,12 @@ cmd_bench_all() {
         tlog ""
         tlog "========== [$idx/$total] bucket=$label  并发梯度: ${cur_conc[*]}（单条 ${once_tokens} token，并发上限 ${max_par}）(早停阈值: 成功率<${sr_min}%) =========="
 
+        local tok; tok=$(bucket_tokenizer "$label")
+        if [[ "$tok" != "$TOKENIZER" ]]; then
+            tlog "[info] 档位 $label 使用数据集构建分词器: $tok（模型分词器: $TOKENIZER）"
+            ensure_tokenizer_cached "$tok"
+        fi
+
         local bucket_stopped=0
         for p in "${cur_conc[@]}"; do
             local n_var="N_${label}"
@@ -427,7 +468,7 @@ cmd_bench_all() {
             # stdbuf 让 evalscope 输出无缓冲，tee 同时写日志和控制台（QCI 可实时看到进度）
             stdbuf -oL -eL evalscope perf \
         --model "$MODEL_NAME" --api "$PROTOCOL" \
-        --tokenizer-path "$TOKENIZER" \
+        --tokenizer-path "$tok" \
         --url "$API_URL" --api-key "$API_KEY" \
         --temperature "$TEMPERATURE" \
         --parallel "$p" --number "$n" \
