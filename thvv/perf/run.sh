@@ -316,7 +316,7 @@ cmd_bench() {
 
     # 报告出口（跑完才会到这里；Ctrl+C 中断会直接终止脚本，不生成报告）：
     #   性能测试报告.html = 阅读版：总体结论 + 并发梯度矩阵 + 失败原因聚合 + 失败请求逐条明细
-    #   性能测试报告.xlsx = 指标交付版：38 列聚合指标 + 失败请求详情 sheet
+    #   性能测试报告.xlsx = 指标交付版：「性能指标」38 列聚合指标 + 「失败请求详情」sheet（14 列）
     echo "[report] 生成性能测试报告 ..."
     python3 scripts/gen_perf_dashboard.py \
         --run-dir "$out" \
@@ -328,6 +328,7 @@ cmd_bench() {
     python3 scripts/gen_report_from_db.py --results-dir results \
         --filter "perf-${bucket}-${ts}" \
         ${CLIENT:+--client "$CLIENT"} \
+        ${API_URL:+--api-url "$API_URL"} \
         --no-tpm-html \
         --out "$out/性能测试报告.xlsx" \
         2>&1 | tail -3 || echo "[warn] Excel 报告生成失败，可手动运行: python3 scripts/gen_report_from_db.py --results-dir results --filter perf-${bucket}-${ts}"
@@ -547,6 +548,7 @@ cmd_bench_all() {
     tlog "[report] 生成 Excel 指标报告 ..."
     python3 scripts/gen_report_from_db.py --results-dir results \
         ${CLIENT:+--client "$CLIENT"} \
+        ${API_URL:+--api-url "$API_URL"} \
         --no-tpm-html \
         --out "$group_dir/性能测试报告.xlsx" \
         2>&1 | tee -a "$group_log" || tlog "[warn] Excel 报告生成失败，可手动运行: bash run.sh report"

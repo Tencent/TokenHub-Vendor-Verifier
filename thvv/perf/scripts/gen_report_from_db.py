@@ -9,9 +9,11 @@ Usage:
 
 Sheets:
   - 性能指标       38 列聚合指标（每行一个 run）
+  - 失败请求详情   逐条罗列所有失败请求（14 列，与平台版报告对齐；无失败时仅表头）
 
-失败请求的逐条明细不再放 xlsx（与 Excel 指标交付版定位解耦），
-统一由 性能测试报告.html（gen_perf_dashboard.py 第四章「失败请求明细」）承载。
+「失败请求详情」直接遍历 results/ 下全部 benchmark_data.db，包含被「性能指标」
+因"无成功样本"跳过的全失败 run；提取与归类逻辑复用 gen_perf_dashboard.py
+（HTML 第四章「失败请求明细」同源），请求 Body 等长文本截断，原文见 benchmark_data.db。
 """
 import argparse
 import json
@@ -21,9 +23,15 @@ import sqlite3
 import sys
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from openpyxl import Workbook
+from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 from openpyxl.styles import Alignment, Font, PatternFill
+
+# 失败明细的提取 / 错误归类与 HTML 报告共用同一套逻辑（同目录脚本）
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from gen_perf_dashboard import _failed_detail, failure_reasons  # noqa: E402
 
 
 _VENDOR_CHART_JS = Path(__file__).resolve().parent.parent.parent / "scripts" / "vendor" / "chart.umd.min.js"
@@ -294,6 +302,112 @@ HEADERS = [
 ]
 
 
+FAIL_HEADERS = [
+    "序号", "数据集", "并发数", "请求URL", "请求方法", "请求Headers", "请求Body",
+    "HTTP状态码", "响应Body", "Request ID", "TTFT(s)", "TTLT(s)", "错误类型", "详细说明",
+]
+# 请求 Body 截断长度：与 gen_perf_dashboard._FAIL_BODY_CHARS 保持一致。
+# 1m 档单条请求可达百万字符，Excel 单元格上限 32767，且需避免把整条请求读入内存。
+_FAIL_REQ_CHARS = 2000
+
+
+def _safe_url(url: str) -> str:
+    """请求URL只保留 scheme://host[:port]/path：去掉 userinfo / query / fragment，
+    避免把 key 等敏感参数带进交付物。"""
+    if not url:
+        return ""
+    try:
+        p = urlsplit(url.strip())
+        if not p.scheme or not p.hostname:
+            return ""
+        host = p.hostname + (f":{p.port}" if p.port else "")
+        return f"{p.scheme}://{host}{p.path}"
+    except ValueError:
+        return ""
+
+
+def collect_failures(runs, api_url: str = ""):
+    """遍历全部 db 收集失败请求（含无成功样本、被「性能指标」跳过的 run）。
+
+    请求 Body 在 SQL 层 substr 截断，避免读入整条超长请求。
+    """
+    url = _safe_url(api_url)
+    items = []
+    for run_tag, db, vendor, bucket, parallel in runs:
+        try:
+            conn = sqlite3.connect(str(db))
+            try:
+                cols = {r[1] for r in conn.execute("PRAGMA table_info(result)")}
+                if "success" not in cols:
+                    continue
+                sel = [f"substr(request, 1, {_FAIL_REQ_CHARS + 1}) AS request" if "request" in cols
+                       else "'' AS request",
+                       "length(request) AS _req_len" if "request" in cols else "0 AS _req_len"]
+                sel += [c for c in ("response_messages", "error", "status_code", "http_status",
+                                    "latency", "first_chunk_latency") if c in cols]
+                cur = conn.execute(
+                    f"SELECT {', '.join(sel)} FROM result WHERE COALESCE(success, 0) != 1")
+                names = [d[0] for d in cur.description]
+                rows = [dict(zip(names, r)) for r in cur.fetchall()]
+            finally:
+                conn.close()
+        except sqlite3.Error as e:
+            print(f"[warn] 读取失败请求失败: {run_tag} ({e})", file=sys.stderr)
+            continue
+
+        for row in rows:
+            d = _failed_detail(row, bucket, parallel, 0)
+            req = d["request"]
+            if (row.get("_req_len") or 0) > _FAIL_REQ_CHARS:
+                req += f"…[已截断，完整 {row['_req_len']} 字符，见 benchmark_data.db]"
+            ftype = next(iter(failure_reasons([dict(row, success=0)])), "其他")
+            detail = d["summary"]
+            if not detail and not d["status"]:
+                detail = "benchmark_data.db 未记录响应/错误内容" + (
+                    "，且无首包（TTFT 为空）" if row.get("first_chunk_latency") is None else "")
+            items.append({
+                "数据集": f"{bucket} ({run_tag})", "并发数": parallel, "请求URL": url,
+                "请求Body": req, "HTTP状态码": d["status"], "响应Body": d["response"],
+                "TTFT(s)": d["ttft"], "TTLT(s)": d["latency"],
+                "错误类型": ftype, "详细说明": detail,
+            })
+    return items
+
+
+def write_failure_sheet(wb, items):
+    """追加「失败请求详情」sheet；无失败时只有表头（与平台版一致）。"""
+    ws = wb.create_sheet("失败请求详情")
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill("solid", fgColor="4472C4")
+    header_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    for c, h in enumerate(FAIL_HEADERS, start=1):
+        cell = ws.cell(row=1, column=c, value=h)
+        cell.font, cell.fill, cell.alignment = header_font, header_fill, header_align
+
+    def put(r, c, v):
+        if isinstance(v, str):
+            v = ILLEGAL_CHARACTERS_RE.sub("", v)  # 控制字符会让 openpyxl 抛 IllegalCharacterError
+        cell = ws.cell(row=r, column=c, value=v)
+        if isinstance(v, str):
+            cell.data_type = "s"  # 以 "=" 开头的响应文本也按文本写入，不被当作公式
+        return cell
+
+    for i, it in enumerate(items, start=1):
+        r = i + 1
+        vals = [i, it["数据集"], it["并发数"], it["请求URL"], "POST", None, it["请求Body"],
+                it["HTTP状态码"], it["响应Body"], None, it["TTFT(s)"], it["TTLT(s)"],
+                it["错误类型"], it["详细说明"]]
+        for c, v in enumerate(vals, start=1):
+            cell = put(r, c, v)
+            if FAIL_HEADERS[c - 1] in ("TTFT(s)", "TTLT(s)") and isinstance(v, (int, float)):
+                cell.number_format = "0.000"
+
+    widths = [6, 30, 8, 40, 8, 20, 60, 10, 60, 24, 10, 10, 14, 50]
+    for c, w in enumerate(widths, start=1):
+        ws.column_dimensions[ws.cell(row=1, column=c).column_letter].width = w
+    ws.freeze_panes = "A2"
+
+
 def find_run_dirs(results_root: Path):
     """扫描 results/ 下含 benchmark_data.db 的子目录，返回 (run_dir, db_path, vendor, bucket, parallel)"""
     runs = []
@@ -322,6 +436,7 @@ def main():
     ap.add_argument("--results-dir", default="results", help="results 目录（默认 ./results）")
     ap.add_argument("--client", default="", help="客户端位置（如：美国硅谷 / 国内广州）")
     ap.add_argument("--network", default="", help="后端网络链接说明")
+    ap.add_argument("--api-url", default="", help="被测接口地址，写入「失败请求详情」的请求URL列（query/userinfo 会被去除）")
     ap.add_argument("--out", default="", help="输出 xlsx 路径，默认 results/性能测试报告_<ts>.xlsx")
     ap.add_argument("--filter", default="", help="只匹配 run-tag 包含该字符串的实验")
     ap.add_argument("--tpm-window-sec", type=float, default=60.0, help="TPM/QPM 趋势图滑动窗口秒数，默认 60")
@@ -395,6 +510,10 @@ def main():
         ws.column_dimensions[col_letter].width = widths.get(h, 14)
     ws.freeze_panes = "B2"
 
+    # 失败明细遍历全部 runs（而非 rows）：全失败的 run 不进「性能指标」，但正是最需要排查的
+    failures = collect_failures(runs, args.api_url)
+    write_failure_sheet(wb, failures)
+
     out_path = Path(args.out) if args.out else (
         root / f"性能测试报告_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
     )
@@ -402,6 +521,7 @@ def main():
     wb.save(out_path)
     print(f"\n[OK] Saved: {out_path}")
     print(f"     性能指标: {len(rows)} rows x {len(HEADERS)} cols")
+    print(f"     失败请求详情: {len(failures)} rows x {len(FAIL_HEADERS)} cols")
 
     # ── TPM/QPM HTML 趋势图 ──
     if not args.no_tpm_html:
