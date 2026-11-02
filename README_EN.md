@@ -175,7 +175,7 @@ Vendor performance acceptance criteria are defined in [`性能验收标准.xlsx`
 
 Quality acceptance baselines are defined in [`效果验收标准.xlsx`](./thvv/eval/效果验收标准.xlsx), with per-model accuracy allowed to float within **±2-4%**:
 
-| Dataset | kimi-k3 | HY3 | deepseek-v4-flash-0731 | hy4-preview | glm-5.3-flash | glm-5.3 | deepseek-v4.1-flash |
+| Dataset | kimi-k3 | HY3 | deepseek-v4-flash-0731 | hy4-preview | glm-5.3-flash | glm-5.3 | deepseek-v4.1-flash-1017 |
 |------|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
 | AIME2026 | 95 | 96.63 | 95.67 | 96 | 93.75 | 93.12 | 98.96 |
 | HLE | 44 | 29.74 | 32.35 | 34.33 | 29.24 | 40.18 | 38.32 |

@@ -174,7 +174,7 @@ thvv/eval/results/<provider>-<model>-<timestamp>/
 
 效果验收基线见 [`效果验收标准.xlsx`](./thvv/eval/效果验收标准.xlsx)，各模型精度可在 **±2-4%** 上下浮动：
 
-| 数据集 | kimi-k3 | HY3 | deepseek-v4-flash-0731 | hy4-preview | glm-5.3-flash | glm-5.3 | deepseek-v4.1-flash |
+| 数据集 | kimi-k3 | HY3 | deepseek-v4-flash-0731 | hy4-preview | glm-5.3-flash | glm-5.3 | deepseek-v4.1-flash-1017 |
 |------|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
 | AIME2026 | 95 | 96.63 | 95.67 | 96 | 93.75 | 93.12 | 98.96 |
 | HLE | 44 | 29.74 | 32.35 | 34.33 | 29.24 | 40.18 | 38.32 |
