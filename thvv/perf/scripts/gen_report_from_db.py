@@ -8,7 +8,7 @@ Usage:
 输出：results/性能测试报告_<时间戳>.xlsx
 
 Sheets:
-  - 性能指标       38 列聚合指标（每行一个 run）
+  - 性能指标       45 列聚合指标（每行一个 run；含 TTFT/TTLT/Rate/ITL/TPOT 五组时延指标）
   - 失败请求详情   逐条罗列所有失败请求（14 列，与平台版报告对齐；无失败时仅表头）
 
 「失败请求详情」直接遍历 results/ 下全部 benchmark_data.db，包含被「性能指标」
@@ -219,6 +219,11 @@ def calc_stats(db_path, label, parallel, tpm_window_sec=60.0):
             except (json.JSONDecodeError, TypeError):
                 pass
 
+    # TPOT：每个成功请求一个值（evalscope 写入的 time_per_output_token，单位秒）。
+    # 与 ITL（相邻流式 chunk 的间隔，按 chunk 汇总）是两个口径，勿混用。
+    tpots = [float(r["time_per_output_token"]) for r in success
+             if isinstance(r.get("time_per_output_token"), (int, float))]
+
     prompt_tokens = [r.get("prompt_tokens", 0) or 0 for r in success]
     completion_tokens = [r.get("completion_tokens", 0) or 0 for r in success]
     total_tokens_sum = sum(prompt_tokens) + sum(completion_tokens)
@@ -267,6 +272,11 @@ def calc_stats(db_path, label, parallel, tpm_window_sec=60.0):
         "P90 ITL(s)": percentile(itls, 90),
         "P95 ITL(s)": percentile(itls, 95),
         "P99 ITL(s)": percentile(itls, 99),
+        "Avg TPOT(s)": safe_avg(tpots),
+        "P50 TPOT(s)": percentile(tpots, 50),
+        "P90 TPOT(s)": percentile(tpots, 90),
+        "P95 TPOT(s)": percentile(tpots, 95),
+        "P99 TPOT(s)": percentile(tpots, 99),
         "Avg Prompt Tokens": safe_avg(prompt_tokens),
         "Avg Completion Tokens": safe_avg(completion_tokens),
         "Total Tokens": total_tokens_sum,
@@ -295,6 +305,7 @@ HEADERS = [
     "Avg TTLT(s)", "P50 TTLT(s)", "P90 TTLT(s)", "P95 TTLT(s)", "P99 TTLT(s)",
     "Avg Rate(t/s)", "P50 Rate(t/s)", "P90 Rate(t/s)", "P95 Rate(t/s)", "P99 Rate(t/s)",
     "Avg ITL(s)", "P50 ITL(s)", "P90 ITL(s)", "P95 ITL(s)", "P99 ITL(s)",
+    "Avg TPOT(s)", "P50 TPOT(s)", "P90 TPOT(s)", "P95 TPOT(s)", "P99 TPOT(s)",
     "Avg Prompt Tokens", "Avg Completion Tokens", "Total Tokens",
     "Avg Cached Tokens", "Avg Cache Hit Ratio",
     "Avg Total Time(ms)",
@@ -432,7 +443,7 @@ def find_run_dirs(results_root: Path):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="从 benchmark_data.db 直接生成 38 列性能报告")
+    ap = argparse.ArgumentParser(description="从 benchmark_data.db 直接生成 45 列性能报告")
     ap.add_argument("--results-dir", default="results", help="results 目录（默认 ./results）")
     ap.add_argument("--client", default="", help="客户端位置（如：美国硅谷 / 国内广州）")
     ap.add_argument("--network", default="", help="后端网络链接说明")
