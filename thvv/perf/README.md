@@ -136,6 +136,24 @@ CONCURRENCY_LADDER="1 8" bash run.sh bench-all      # 自定义梯度，仍受�
 TPM_BUDGET=10000000 bash run.sh bench-all           # 额外叠加 TPM 预算（默认 0=不启用），与上限取较小者
 ```
 
+**预热与单梯度时长**（对齐性能验收标准：低并发预热 5min，每个并发梯度压 10–15min）：
+
+| 环境变量 | 默认 | 说明 |
+|---|---|---|
+| `WARMUP_SECS` | 300 | 正式压测前用低并发持续发请求的秒数；`0` = 不预热 |
+| `WARMUP_BUCKET` | 1k | 预热用的档位 |
+| `WARMUP_PARALLEL` | 4 | 预热并发 |
+| `TARGET_DURATION` | 600 | 单个并发梯度的目标时长（秒）；`0` = 回到上表的固定请求数 |
+
+- 预热产物写到 `results_warmup/`，不进 `results/`，因此不会混入报告。某轮预热没产出结果（如鉴权失败）会立即停止预热。
+- 请求数按 `ceil(并发 × TARGET_DURATION / 本档上一梯度实测 Avg Latency)` 估算，且不少于上表默认值；
+  本档第一个梯度没有实测值，沿用默认请求数。并发升高后单请求耗时通常变长，实际时长一般比目标略长。
+- 显式设置 `N_<label>` 时以它为准，不再按时长估算。
+
+```bash
+WARMUP_SECS=0 TARGET_DURATION=0 bash run.sh bench-all   # 快速冒烟：不预热、固定请求数（旧行为）
+```
+
 > 1m 档能否跑通还取决于被测模型上下文：TokenHub 网关 minimax-m3.1-flash（TPM 100 万）直接 429，
 > DeepSeek 原厂（实测 88 万 token 可入）正常。
 

@@ -8,6 +8,7 @@ thvv/eval/datasets/*
 # 例外：MSR-VTT 视频样本集（走 Git LFS 管理，见 .gitattributes）
 !thvv/eval/datasets/msr_vtt/
 thvv/perf/results/
+thvv/perf/results_warmup/
 thvv/cache/results/
 thvv/cache/reports/
 thvv/cache/cache_store/

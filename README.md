@@ -78,7 +78,7 @@ bash quickstart.sh perf bench-all            # 全档位 × 并发梯度（可�
 bash quickstart.sh perf report               # 从 results/ 重新生成报告
 ```
 
-常用环境变量：`BUCKETS`、`CONCURRENCY_LADDER`、`BUCKET_COOLDOWN`、`N_<label>`（单档请求数）、`SUCCESS_RATE_MIN`（成功率早停）、`TEMPERATURE`（默认按模型名自适应：kimi/moonshot=1.0，其余=0.0）、`CLIENT`（xlsx 报告署名）。`MODEL_NAME` 命中常见模型族时 tokenizer 自动识别，`TOKENIZER` 显式设置优先。详见 `thvv/perf/README.md`。
+常用环境变量：`BUCKETS`、`CONCURRENCY_LADDER`、`BUCKET_COOLDOWN`、`N_<label>`（单档请求数）、`SUCCESS_RATE_MIN`（成功率早停）、`WARMUP_SECS`（预热秒数，默认 300）、`TARGET_DURATION`（单梯度目标时长，默认 600s）、`TEMPERATURE`（默认按模型名自适应：kimi/moonshot=1.0，其余=0.0）、`CLIENT`（xlsx 报告署名）。`MODEL_NAME` 命中常见模型族时 tokenizer 自动识别，`TOKENIZER` 显式设置优先。详见 `thvv/perf/README.md`。
 
 ### 4. 效果评测
 

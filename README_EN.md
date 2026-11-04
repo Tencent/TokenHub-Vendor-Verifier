@@ -78,7 +78,7 @@ bash quickstart.sh perf bench-all            # All buckets × concurrency ladder
 bash quickstart.sh perf report               # Regenerate report from results/
 ```
 
-Common environment variables: `BUCKETS`, `CONCURRENCY_LADDER`, `BUCKET_COOLDOWN`, `N_<label>` (requests per bucket), `SUCCESS_RATE_MIN` (success-rate early stop), `TEMPERATURE` (adaptive by model name by default: kimi/moonshot=1.0, others=0.0), `CLIENT` (client name stamped into the xlsx report). When `MODEL_NAME` matches a known model family the tokenizer is auto-detected; an explicit `TOKENIZER` takes precedence. See `thvv/perf/README.md` for details.
+Common environment variables: `BUCKETS`, `CONCURRENCY_LADDER`, `BUCKET_COOLDOWN`, `N_<label>` (requests per bucket), `SUCCESS_RATE_MIN` (success-rate early stop), `WARMUP_SECS` (warm-up seconds, default 300), `TARGET_DURATION` (target seconds per concurrency level, default 600), `TEMPERATURE` (adaptive by model name by default: kimi/moonshot=1.0, others=0.0), `CLIENT` (client name stamped into the xlsx report). When `MODEL_NAME` matches a known model family the tokenizer is auto-detected; an explicit `TOKENIZER` takes precedence. See `thvv/perf/README.md` for details.
 
 ### 4. Quality Evaluation
 
