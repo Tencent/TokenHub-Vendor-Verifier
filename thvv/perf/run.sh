@@ -21,7 +21,13 @@
 #                       注意：该折算假设每条请求耗时 60 秒，实测更快时真实 TPM 会是数倍，
 #                       不能当硬限流；要严格限速请直接用 evalscope 的 --rate。
 #   BUCKET_COOLDOWN     档间冷却秒数，默认 120
-#   N_<label>           覆盖特定档位的请求数（如 N_1k=20 N_9k=100）
+#   N_<label>           覆盖特定档位的请求数（如 N_1k=20 N_9k=100），优先于 TARGET_DURATION
+#   WARMUP_SECS         压测前预热秒数，默认 300（性能验收标准：低并发预热 5min）；0 = 不预热
+#   WARMUP_BUCKET       预热用档位，默认 1k
+#   WARMUP_PARALLEL     预热并发，默认 4。预热产物写到 results_warmup/，不计入报告
+#   TARGET_DURATION     单个并发梯度的目标时长（秒），默认 600（标准要求 10–15min）。
+#                       用本档上一梯度实测 Avg Latency 估算请求数，不少于默认请求数；
+#                       本档第一个梯度沿用默认请求数。0 = 关闭，回到固定请求数
 #   SUCCESS_RATE_MIN    成功率早停阈值（百分比，默认 0=关闭）；
 #                       某档并发跑完后成功率低于此值时，跳过该 bucket 剩余更高并发，
 #                       直接切到下一个 bucket。设为 0 可关闭早停。
@@ -287,6 +293,25 @@ cmd_check() {
     esac
 }
 
+# ---- evalscope perf 公共参数 → 全局数组 EVALSCOPE_ARGS ----
+# 用法: build_evalscope_args <dataset> <tokenizer> <minlen> <maxlen> <parallel> <number> <outdir>
+# 调用方: evalscope perf "${EVALSCOPE_ARGS[@]}"（bench / bench-all / 预热共用，保证参数口径一致）
+build_evalscope_args() {
+    EVALSCOPE_ARGS=(
+        --model "$MODEL_NAME" --api "$PROTOCOL"
+        --tokenizer-path "$2"
+        --url "$API_URL" --api-key "$API_KEY"
+        --temperature "$TEMPERATURE"
+        --parallel "$5" --number "$6"
+        --dataset custom_multi_turn
+        --dataset-path "$1"
+        --min-prompt-length "$3" --max-prompt-length "$4"
+        --max-tokens 4096 --multi-turn --max-turns 1
+        --connect-timeout 60 --read-timeout 600 --db-commit-interval 5
+        --outputs-dir "$7" --no-timestamp --no-test-connection
+    )
+}
+
 cmd_bench() {
     ensure_perf_deps
     auto_detect_tokenizer
@@ -317,19 +342,8 @@ cmd_bench() {
     echo "        out=$out"
     echo ""
 
-    evalscope perf \
-        --model "$MODEL_NAME" --api "$PROTOCOL" \
-        --tokenizer-path "$tok" \
-        --url "$API_URL" --api-key "$API_KEY" \
-        --temperature "$TEMPERATURE" \
-        --parallel "$p" --number "$n" \
-        --dataset custom_multi_turn \
-        --dataset-path "$ds" \
-        --min-prompt-length "$minlen" --max-prompt-length "$maxlen" \
-        --max-tokens 4096 --multi-turn --max-turns 1 \
-        --connect-timeout 60 --read-timeout 600 --db-commit-interval 5 \
-        --outputs-dir "$out" --no-timestamp --no-test-connection \
-        2>&1 | tee "$out/run.log"
+    build_evalscope_args "$ds" "$tok" "$minlen" "$maxlen" "$p" "$n" "$out"
+    evalscope perf "${EVALSCOPE_ARGS[@]}" 2>&1 | tee "$out/run.log"
 
     echo ""
     echo "[done] 结果目录: $KIT_DIR/$out"
@@ -389,6 +403,62 @@ print(f'{success / max(total, 1) * 100:.2f}')
 " 2>/dev/null || echo "0"
 }
 
+# ---- 从 benchmark_summary.json 提取单请求平均耗时 Avg Latency (s)；取不到输出空串 ----
+extract_avg_latency() {
+    python3 -c "
+import json, sys
+try:
+    v = float(json.load(open(sys.argv[1])).get('Avg Latency (s)') or 0)
+    print(f'{v:.3f}' if v > 0 else '')
+except Exception:
+    print('')
+" "$1" 2>/dev/null || true
+}
+
+# ---- 按目标时长估算请求数：ceil(并发 × 目标秒数 / 单请求耗时)，且不少于 floor ----
+# 用法: duration_number <parallel> <target_secs> <latency_secs> <floor>
+duration_number() {
+    awk -v p="$1" -v t="$2" -v l="$3" -v f="$4" \
+        'BEGIN { x = p * t / l; n = int(x); if (n < x) n++; if (n < f) n = f; print n }'
+}
+
+# ---- 预热：低并发持续发请求 secs 秒，排除冷启动影响 ----
+# 产物写到 results_warmup/（不在 results/ 下：gen_report_from_db 会 rglob 整个 results/，
+# 放进去会混入报告）。每轮 number = 2×并发，轮次之间检查是否已满 secs 秒。
+# 某轮没产出 benchmark_summary.json（鉴权失败、端点不通等）立即停止预热，避免空转。
+# 用法: run_warmup <secs> <bucket> <parallel> <logfile>
+run_warmup() {
+    local secs="$1" bucket="$2" par="$3" log="$4"
+    local ds="${DATASET_DIR}/perf_zh_${bucket}.jsonl"
+    if [[ ! -f "$ds" ]]; then
+        echo "⚠ [warmup] 数据集不存在: $ds，跳过预热" | tee -a "$log"
+        return 0
+    fi
+    local range=($(bucket_range "$bucket"))
+    local tok; tok=$(bucket_tokenizer "$bucket")
+    if [[ "$tok" != "$TOKENIZER" ]]; then
+        ensure_tokenizer_cached "$tok"
+    fi
+    local wdir="results_warmup/warmup-$(date +%Y%m%d-%H%M%S)"
+    local start=$SECONDS round=0
+    echo "🔥 [warmup] bucket=$bucket parallel=$par 持续 ${secs}s（产物: $wdir，不计入报告）" | tee -a "$log"
+    while (( SECONDS - start < secs )); do
+        round=$((round+1))
+        local out="$wdir/round_${round}"
+        mkdir -p "$out"
+        build_evalscope_args "$ds" "$tok" "${range[0]}" "${range[1]}" "$par" $((par*2)) "$out"
+        evalscope perf "${EVALSCOPE_ARGS[@]}" > "$out/run.log" 2>&1 || true
+        local summary
+        summary=$(find "$out" -maxdepth 4 -name benchmark_summary.json 2>/dev/null | head -1)
+        if [[ -z "$summary" ]]; then
+            echo "⚠ [warmup] round $round 未产出 benchmark_summary.json（见 $out/run.log），停止预热" | tee -a "$log"
+            return 0
+        fi
+        echo "🔥 [warmup] round $round 完成，成功率=$(extract_success_rate "$summary")%，已预热 $((SECONDS-start))s / ${secs}s" | tee -a "$log"
+    done
+    echo "✅ [warmup] 预热完成，共 $round 轮、$((SECONDS-start))s" | tee -a "$log"
+}
+
 # ---- 全档位压测（梯度递进 + 冷却）----
 # 说明：只在全部 bucket 正常跑完后自动生成报告。
 # 若中途 Ctrl+C 中断或异常失败，请手动运行: bash run.sh report --client "供应商名称"
@@ -411,6 +481,11 @@ cmd_bench_all() {
     # 成功率早停阈值（百分比，默认 0=关闭；设为非 0 值如 99.9 开启）
     # 参考 benjaminswu-perf 分支：某档并发跑完后成功率低于阈值 → 跳过该 bucket 剩余并发
     local sr_min="${SUCCESS_RATE_MIN:-0}"
+    # 性能验收标准：低并发预热 5min，每个并发梯度压 10–15min
+    local warmup_secs="${WARMUP_SECS:-300}"
+    local warmup_bucket="${WARMUP_BUCKET:-1k}"
+    local warmup_par="${WARMUP_PARALLEL:-4}"
+    local target_dur="${TARGET_DURATION:-600}"
 
     local -a bucket_arr=($buckets)
     local -a conc_arr=($conc_ladder)
@@ -433,8 +508,14 @@ cmd_bench_all() {
     tlog "  并发梯度 : $conc_ladder"
     tlog "  档间冷却 : ${cooldown}s"
     tlog "  成功率早停阈值: ${sr_min}% (SUCCESS_RATE_MIN，设 0 关闭)"
+    tlog "  预热     : ${warmup_secs}s，bucket=${warmup_bucket} 并发=${warmup_par} (WARMUP_SECS，设 0 关闭)"
+    tlog "  单梯度目标时长: ${target_dur}s (TARGET_DURATION，设 0 = 固定请求数)"
     tlog "  Group dir: $group_dir"
     tlog "========================================================="
+
+    if [[ "$warmup_secs" -gt 0 ]]; then
+        run_warmup "$warmup_secs" "$warmup_bucket" "$warmup_par" "$group_log"
+    fi
 
     for label in "${bucket_arr[@]}"; do
         idx=$((idx+1))
@@ -486,9 +567,17 @@ cmd_bench_all() {
         fi
 
         local bucket_stopped=0
+        local prev_lat=""   # 本档上一并发梯度实测 Avg Latency，用于估算下一梯度请求数
         for p in "${cur_conc[@]}"; do
             local n_var="N_${label}"
             local n="${!n_var:-$(parallel_number "$p")}"
+            # 按目标时长估算请求数（显式 N_<label> 优先）：用本档上一梯度的单请求耗时，
+            # 请求数 = ceil(并发 × TARGET_DURATION / 耗时)，不少于默认请求数。
+            # 本档第一个梯度没有实测值，沿用默认请求数（并发 1 × 20 条，实测约 6~20min）。
+            # 并发升高后单请求耗时通常变长，所以实际时长一般会比目标略长。
+            if [[ -z "${!n_var:-}" && "$target_dur" -gt 0 && -n "$prev_lat" ]]; then
+                n=$(duration_number "$p" "$target_dur" "$prev_lat" "$n")
+            fi
             # 仅在启用 TPM 预算时，请求数才按单分钟可发条数收敛（显式 N_<label> 优先）
             if [[ -z "${!n_var:-}" && "$tpm_budget" -gt 0 && $n -gt $tpm_par ]]; then
                 n=$tpm_par
@@ -506,19 +595,8 @@ cmd_bench_all() {
             tlog "        out=$out"
 
             # stdbuf 让 evalscope 输出无缓冲，tee 同时写日志和控制台（QCI 可实时看到进度）
-            stdbuf -oL -eL evalscope perf \
-        --model "$MODEL_NAME" --api "$PROTOCOL" \
-        --tokenizer-path "$tok" \
-        --url "$API_URL" --api-key "$API_KEY" \
-        --temperature "$TEMPERATURE" \
-        --parallel "$p" --number "$n" \
-        --dataset custom_multi_turn \
-        --dataset-path "$ds" \
-        --min-prompt-length "$minlen" --max-prompt-length "$maxlen" \
-        --max-tokens 4096 --multi-turn --max-turns 1 \
-        --connect-timeout 60 --read-timeout 600 --db-commit-interval 5 \
-        --outputs-dir "$out" --no-timestamp --no-test-connection \
-        2>&1 | tee "$out/run.log" &
+            build_evalscope_args "$ds" "$tok" "$minlen" "$maxlen" "$p" "$n" "$out"
+            stdbuf -oL -eL evalscope perf "${EVALSCOPE_ARGS[@]}" 2>&1 | tee "$out/run.log" &
             local pid=$!
             tlog "[bench] PID=$pid  日志: $out/run.log"
 
@@ -545,7 +623,9 @@ cmd_bench_all() {
             if [[ -n "$summary" ]]; then
                 local sr
                 sr=$(extract_success_rate "$summary")
-                tlog "✅ [$label/p=$p] done → 成功率=${sr}%"
+                local lat; lat=$(extract_avg_latency "$summary")
+                [[ -n "$lat" ]] && prev_lat="$lat"
+                tlog "✅ [$label/p=$p] done → 成功率=${sr}%${lat:+，Avg Latency=${lat}s}"
                 n_done=$((n_done+1))
 
                 # 成功率 < 阈值 → 早停该 bucket（用 awk 做浮点比较）
