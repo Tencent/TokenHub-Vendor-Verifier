@@ -14,9 +14,12 @@
 #
 # bench-all 环境变量：
 #   BUCKETS             档位列表，默认 "1k 9k 16k 32k 64k 128k 200k 512k 1m"
-#   CONCURRENCY_LADDER  并发梯度，默认 "1 8 32 64 128"
-#   TPM_BUDGET          TPM 预算（tokens/min），默认 10000000。按「单条 token × 并发」裁剪并发阶梯，
-#                       请求数也不超过该档可用并发数；某档连并发 1 都超预算则整档跳过。0 = 不限制。
+#   CONCURRENCY_LADDER  并发梯度，默认 "1 8 32 64 128"。显式设置后不再追加档位专用并发。
+#                       未设置时 200k 会自动补一个 16 并发点（bucket_extra_parallels）。
+#   TPM_BUDGET          TPM 预算（tokens/min），默认 0 = 不限制。按「单条 token × 并发」裁剪并发阶梯，
+#                       请求数也不超过该档可用并发数；某档连并发 1 都超预算则整档跳过。
+#                       注意：该折算假设每条请求耗时 60 秒，实测更快时真实 TPM 会是数倍，
+#                       不能当硬限流；要严格限速请直接用 evalscope 的 --rate。
 #   BUCKET_COOLDOWN     档间冷却秒数，默认 120
 #   N_<label>           覆盖特定档位的请求数（如 N_1k=20 N_9k=100）
 #   SUCCESS_RATE_MIN    成功率早停阈值（百分比，默认 0=关闭）；
@@ -219,12 +222,29 @@ bucket_tokens() {
 }
 
 # ---- 档位并发上限（按实测上下文/TPM 能力约定，超出的并发阶梯不跑）----
+# 说明：32k 及以下沿用全局梯度的 128 上限；超长档位按实测能力收敛。
+# 注意：下列档位在实测中 TPM 会超过 1000 万（64k×64 约 1251 万、128k×32 约 1317 万、
+# 200k×16 约 1300 万），如被测网关有硬性 TPM 配额，高并发点会返回 429。
 bucket_max_parallel() {
     case "$1" in
-        128k|200k) echo 64 ;;   # 128 并发删掉
-        512k)      echo 32 ;;   # 64/128 删掉
-        1m)        echo 8 ;;    # 32/64/128 删掉
-        *)         echo 128 ;;
+        1k|9k|16k|32k) echo 128 ;;
+        64k)  echo 64 ;;   # 128 并发删掉
+        128k) echo 32 ;;   # 64/128 并发删掉
+        200k) echo 16 ;;   # 32/64/128 并发删掉
+        512k) echo 8 ;;    # 32/64/128 并发删掉
+        1m)   echo 8 ;;    # 32/64/128 并发删掉
+        # 未知档位返回失败，由调用方跳过，避免拼错档位名时静默按 128 并发去跑
+        *)    return 1 ;;
+    esac
+}
+
+# ---- 档位补充并发（不在全局梯度里、但某档位需要单独补的并发点）----
+# 200k 在 8 与 32 之间补 16：观察中长上下文的中段拐点。
+# 仅在未显式设置 CONCURRENCY_LADDER 时生效；显式指定梯度时以用户给定的为准。
+bucket_extra_parallels() {
+    case "$1" in
+        200k) echo 16 ;;
+        *)    echo "" ;;
     esac
 }
 
@@ -245,12 +265,12 @@ cmd_check() {
         echo "  [warn] TOKENIZER 未设置，请在 configs/.env 中指定 tokenizer 仓库名"
     fi
     echo "[check] datasets... (DATASET_DIR=$DATASET_DIR)"
-    for f in 1k 9k 16k 32k 64k 128k 200k; do
+    for f in 1k 9k 16k 32k 64k 128k 200k 512k 1m; do
         if [[ -f "${DATASET_DIR}/perf_zh_${f}.jsonl" ]]; then
             sz=$(du -h "${DATASET_DIR}/perf_zh_${f}.jsonl" | cut -f1)
             echo "  OK: perf_zh_${f}.jsonl ($sz)"
         else
-            echo "  [warn] 缺失: datasets/perf_zh_${f}.jsonl"
+            echo "  [warn] 缺失: ${DATASET_DIR}/perf_zh_${f}.jsonl"
         fi
     done
     echo "[check] configs/.env..."
@@ -378,10 +398,13 @@ cmd_bench_all() {
     ensure_tokenizer_cached
 
     local buckets="${BUCKETS:-1k 9k 16k 32k 64k 128k 200k 512k 1m}"
-    local conc_ladder="${CONCURRENCY_LADDER:-1 8 32 64 128}"
-    # TPM 预算（tokens/min）：按「单条 token × 并发」估算每分钟 token 消耗，
-    # 超过预算的并发阶梯直接裁掉；某档连并发 1 都超预算则整档跳过。
-    # 默认 1000 万（用户口径）；0 = 不限制。
+    # 显式设置 CONCURRENCY_LADDER 时以用户梯度为准，不再追加档位专用并发。
+    local ladder_user="${CONCURRENCY_LADDER:-}"
+    local conc_ladder="${ladder_user:-1 8 32 64 128}"
+    # TPM 预算（tokens/min）：0 = 不限制（默认）。
+    # 注意：该预算按「单条 token × 并发」折算并发上限，等价于假设每条请求耗时 60 秒；
+    # 实测单条远快于 60 秒时，真实 TPM 会是预览值的 60/耗时 倍，不能当作硬限流使用。
+    # 需要严格限流请直接用 evalscope 的 --rate（每秒请求数）。
     # 按被测网关实际 TPM 设置，例如 TokenHub minimax-m3.1-flash 为 100 万。
     local tpm_budget="${TPM_BUDGET:-0}"
     local cooldown="${BUCKET_COOLDOWN:-120}"
@@ -393,6 +416,7 @@ cmd_bench_all() {
     local -a conc_arr=($conc_ladder)
     local total=${#bucket_arr[@]} idx=0
     local n_done=0 n_fail=0
+    local -a group_runs=()   # 本次跑出的 run 目录名，用于 Excel 汇总时排除历史结果
 
     local ts; ts=$(date +%Y%m%d-%H%M)
     local group_dir="results/_group_${ts}"
@@ -422,7 +446,11 @@ cmd_bench_all() {
 
         # 并发上限 = 档位能力约定（bucket_max_parallel），若启用 TPM 预算则取更小者
         local once_tokens=$(bucket_tokens "$label")
-        local max_par=$(bucket_max_parallel "$label")
+        local max_par
+        if ! max_par=$(bucket_max_parallel "$label"); then
+            tlog "❌ [$label] 未知档位，可用档位: 1k 9k 16k 32k 64k 128k 200k 512k 1m，跳过"
+            continue
+        fi
         local tpm_par=999999
         if [[ "$tpm_budget" -gt 0 ]]; then
             tpm_par=$(( tpm_budget / once_tokens ))
@@ -432,6 +460,17 @@ cmd_bench_all() {
         for p in "${conc_arr[@]}"; do
             [[ $p -le $max_par ]] && cur_conc+=("$p")
         done
+        # 未显式指定梯度时，补该档位专用并发（如 200k 的 16）
+        if [[ -z "$ladder_user" ]]; then
+            local extra
+            for extra in $(bucket_extra_parallels "$label"); do
+                [[ $extra -le $max_par ]] && cur_conc+=("$extra")
+            done
+        fi
+        # 无论梯度来自默认值还是用户输入，都去重升序，保证并发从小到大依次压测
+        if [[ ${#cur_conc[@]} -gt 1 ]]; then
+            mapfile -t cur_conc < <(printf '%s\n' "${cur_conc[@]}" | sort -n -u)
+        fi
         if [[ ${#cur_conc[@]} -eq 0 ]]; then
             tlog "⏭ [$label] 并发上限 ${max_par}（单条 ${once_tokens} token，TPM 预算 ${tpm_budget}/min）低于梯度最小值，跳过该档位"
             continue
@@ -494,7 +533,11 @@ cmd_bench_all() {
             done
             tlog "⏳ [$label/p=$p] 已结束，耗时 ${wait_secs}s"
 
-            ln -sfn "$out" "$group_dir/$(basename "$out")"
+            # 软链必须用相对 group 目录的路径：$out 是 results/perf-xxx，
+            # 写成 "$out" 会被解析成 results/_group_xxx/results/perf-xxx（不存在），
+            # 导致组目录下扫不到 benchmark_data.db、汇总 HTML 生成失败。
+            ln -sfn "../$(basename "$out")" "$group_dir/$(basename "$out")"
+            group_runs+=("$(basename "$out")")
 
             # 跑完后从 benchmark_summary.json 提取成功率，判断是否早停
             local summary
@@ -546,7 +589,13 @@ cmd_bench_all() {
         --out "$group_dir/性能测试报告.html" \
         2>&1 | tee -a "$group_log" || tlog "[warn] 报告生成失败，可手动运行: bash run.sh report --run-dir $group_dir"
     tlog "[report] 生成 Excel 指标报告 ..."
+    # 只统计本次跑出的 run：否则 results/ 下的历史构建会被一起算进交付表格
+    local -a xlsx_filter=()
+    if [[ ${#group_runs[@]} -gt 0 ]]; then
+        xlsx_filter=(--filter "${group_runs[@]}")
+    fi
     python3 scripts/gen_report_from_db.py --results-dir results \
+        ${xlsx_filter[@]+"${xlsx_filter[@]}"} \
         ${CLIENT:+--client "$CLIENT"} \
         ${API_URL:+--api-url "$API_URL"} \
         --no-tpm-html \
@@ -554,8 +603,16 @@ cmd_bench_all() {
         2>&1 | tee -a "$group_log" || tlog "[warn] Excel 报告生成失败，可手动运行: bash run.sh report"
 
     tlog ""
-    tlog "📄 报告(HTML): $group_dir/性能测试报告.html"
-    tlog "📊 报告(Excel): $group_dir/性能测试报告.xlsx"
+    if [[ -f "$group_dir/性能测试报告.html" ]]; then
+        tlog "📄 报告(HTML): $group_dir/性能测试报告.html"
+    else
+        tlog "⚠ 报告(HTML) 未生成，原因见 $group_log（可用 bash run.sh report --run-dir $group_dir 补）"
+    fi
+    if [[ -f "$group_dir/性能测试报告.xlsx" ]]; then
+        tlog "📊 报告(Excel): $group_dir/性能测试报告.xlsx"
+    else
+        tlog "⚠ 报告(Excel) 未生成，原因见 $group_log"
+    fi
 }
 
 main() {

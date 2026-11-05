@@ -449,7 +449,12 @@ def main():
     ap.add_argument("--network", default="", help="后端网络链接说明")
     ap.add_argument("--api-url", default="", help="被测接口地址，写入「失败请求详情」的请求URL列（query/userinfo 会被去除）")
     ap.add_argument("--out", default="", help="输出 xlsx 路径，默认 results/性能测试报告_<ts>.xlsx")
-    ap.add_argument("--filter", default="", help="只匹配 run-tag 包含该字符串的实验")
+    ap.add_argument(
+        "--filter",
+        nargs="+",
+        default=[],
+        help="只匹配 run-tag 包含任一给定字符串的实验（可传多个）",
+    )
     ap.add_argument("--tpm-window-sec", type=float, default=60.0, help="TPM/QPM 趋势图滑动窗口秒数，默认 60")
     ap.add_argument("--no-tpm-html", action="store_true", help="不生成 TPM 趋势 HTML（默认与 xlsx 同名伴随生成）")
     args = ap.parse_args()
@@ -457,7 +462,7 @@ def main():
     root = Path(args.results_dir)
     runs = find_run_dirs(root)
     if args.filter:
-        runs = [r for r in runs if args.filter in r[0]]
+        runs = [r for r in runs if any(f in r[0] for f in args.filter)]
     if not runs:
         print(f"[warn] {root} 下未找到任何 benchmark_data.db", file=sys.stderr)
         sys.exit(1)
