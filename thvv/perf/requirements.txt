@@ -7,6 +7,8 @@ evalscope[perf]>=0.13.0
 # Tokenizer
 transformers>=4.40.0
 modelscope>=1.20.0
+# Kimi / moonshot tokenizer（如 moonshotai/Kimi-K2-Thinking）加载时依赖 tiktoken
+tiktoken>=0.7.0
 
 # 报告生成
 openpyxl>=3.1.0
