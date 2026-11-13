@@ -1024,8 +1024,15 @@ def _run_with_retry(cmd, output_dir, model_name, dataset_label):
 # 结果持久化
 # ---------------------------------------------------------------------------
 
-# v2 效果评测报告文件名（六章模版：核心结论/效果稳定性/性能/配置/逐题证据/异常跳过）
-_V2_REPORT_NAME = 'eval_report_v2.html'
+# v2 效果评测报告文件名模板（六章模版：核心结论/效果稳定性/性能/配置/逐题证据/异常跳过）
+# 文件名随数据集变化，多数据集产物平铺/对外交付时不会撞名
+_V2_REPORT_NAME_FMT = 'eval_report_v2_{dataset}.html'
+
+
+def v2_report_name(dataset_label):
+    """按数据集生成 v2 报告文件名（数据集名做文件名安全化，非法字符转下划线）。"""
+    safe = re.sub(r'[^0-9A-Za-z._-]+', '_', str(dataset_label or 'unknown')).strip('_-')
+    return _V2_REPORT_NAME_FMT.format(dataset=safe or 'unknown')
 
 # reports/*.json 中体积过大、不适合整段塞进汇总与报告的字段
 _SUMMARY_DROP_KEYS = {
@@ -1068,14 +1075,14 @@ def _save_dataset_summary(ds_key, ds_label, output_dir, success, report_data,
         summary['cache_stats'] = cache_stats_data
     if perf_stats_data is not None:
         summary['throughput_stats'] = perf_stats_data
-    summary['report_v2'] = os.path.join(output_dir, _V2_REPORT_NAME)
+    summary['report_v2'] = os.path.join(output_dir, v2_report_name(ds_label))
 
     with open(summary_path, 'w') as f:
         json.dump(summary, f, indent=2, ensure_ascii=False, default=str)
     print(f"  📄 结果摘要已保存: {summary_path}")
     if summary['skipped_count']:
         print(f"  ⚠️ 容错跳过 {summary['skipped_count']} 题，"
-              f"有效样本数已小于实际请求题数（详见 eval_report_v2.html 第六章）")
+              f"有效样本数已小于实际请求题数（详见 {v2_report_name(ds_label)} 第六章）")
     return summary
 
 
@@ -1126,7 +1133,7 @@ def _format_duration(seconds):
 # 增强版详细报告（evalscope 原生 report.html + 平台注入卡片）
 # ---------------------------------------------------------------------------
 
-def _generate_v2_report(output_dir, model_name, success):
+def _generate_v2_report(output_dir, model_name, success, dataset_label):
     """生成 v2 效果评测报告（六章模版，THVV 对外唯一报告形态）。
 
     数据源为 evalscope 落盘产物：reviews/、skipped_samples.jsonl、
@@ -1140,7 +1147,7 @@ def _generate_v2_report(output_dir, model_name, success):
         return info
     from pathlib import Path
     try:
-        out_html = Path(output_dir) / _V2_REPORT_NAME
+        out_html = Path(output_dir) / v2_report_name(dataset_label)
         n_cases, n_skip, _n_swe = eval_report_v2.generate_report(
             Path(output_dir), out_html, model_name)
         info.update(path=str(out_html), cases=n_cases, skipped=n_skip)
@@ -1185,9 +1192,10 @@ def _package_results(result_base_dir, html_report_path, all_summaries):
             if os.path.exists(ledger_path):
                 files_to_pack.append((ledger_path, f'{ds_label}/{cache_stats.LEDGER_NAME}'))
             # v2 效果评测报告（六章模版），生成了就一并归档
-            v2_path = os.path.join(output_dir, _V2_REPORT_NAME)
+            v2_name = v2_report_name(ds_label)
+            v2_path = os.path.join(output_dir, v2_name)
             if os.path.exists(v2_path):
-                files_to_pack.append((v2_path, f'{ds_label}/{_V2_REPORT_NAME}'))
+                files_to_pack.append((v2_path, f'{ds_label}/{v2_name}'))
             reports_dir = os.path.join(output_dir, 'reports')
             if os.path.isdir(reports_dir):
                 for root, _, files in os.walk(reports_dir):
@@ -1476,7 +1484,7 @@ def main():
             print(f"\n  ⚠️ 未找到 evalscope 报告: {report_path}")
 
         # 生成 v2 效果评测报告（六章模版，对外唯一报告形态）
-        v2_info = _generate_v2_report(final_output_dir, args.model_name, success)
+        v2_info = _generate_v2_report(final_output_dir, args.model_name, success, ds_config['label'])
 
         summary = _save_dataset_summary(
             ds_key, ds_config['label'], final_output_dir,
@@ -1519,7 +1527,7 @@ def main():
 
     _save_overall_summary(all_summaries, args.provider, args.model_name, result_base)
     # 按数据集生成产物：在每个数据集的 output_dir 下生成该数据集独立的
-    # per_sample_details.csv（六章模版报告 eval_report_v2.html 已在单数据集执行阶段生成）。
+    # per_sample_details.csv（六章模版报告 eval_report_v2_<数据集>.html 已在单数据集执行阶段生成）。
     # 数据集级不再重复生成 all_eval_summary.json / eval_results.tar.gz——
     # 汇总只留根目录一份，打包只留 run 根一份，避免内容重复的产物。
     # 必须早于父级打包 —— per_sample_details.csv 在这里才生成，否则进不了父级 tar.gz。
@@ -1537,13 +1545,13 @@ def main():
 def _export_per_dataset_artifacts(all_summaries):
     """在每个数据集的 output_dir 下生成该数据集独立的明细产物。
 
-    v2 报告（eval_report_v2.html）已在单数据集执行阶段生成，这里补齐逐题明细：
+    v2 报告（eval_report_v2_<数据集>.html）已在单数据集执行阶段生成，这里补齐逐题明细：
       eval/results/<run>/
       ├── all_eval_summary.json           # 总汇总（仅 run 根一份）
       ├── eval_results.tar.gz             # 打包归档（仅 run 根一份）
       ├── arxivmath/
       │   ├── eval_summary.json           # 数据集摘要
-      │   ├── eval_report_v2.html         # 六章模版报告（执行阶段已生成）
+      │   ├── eval_report_v2_<数据集>.html  # 六章模版报告（执行阶段已生成）
       │   ├── per_sample_details.csv      # 逐题明细
       │   ├── logs/  configs/             # evalscope 原始日志与配置
       │   └── （predictions/ reviews/ reports/ 打包后被清理，见 _cleanup_redundant_artifacts）
@@ -1574,7 +1582,7 @@ def _cleanup_redundant_artifacts(all_summaries):
     - predictions/  模型原始预测（thinking 长文本，通常占产物 60%+），
       其"模型回复"已完整提炼进 per_sample_details.csv 的 response 列；
     - reviews/      逐题评判原始行，得分与题目已提炼进同一 CSV；
-    - reports/      evalscope 原生 HTML/JSON 报告，与 eval_report_v2.html
+    - reports/      evalscope 原生 HTML/JSON 报告，与 eval_report_v2_<数据集>.html
       及 eval_summary.json 内容重复。
 
     三者均已随 eval_results.tar.gz 归档，散目录里保留只会放大体积。

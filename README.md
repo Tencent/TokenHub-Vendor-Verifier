@@ -42,7 +42,7 @@
         ├── scripts/run_eval.py       # 评测引擎（预检查 + 限流重试 + 打包）
         ├── scripts/eval_report_v2.py # 报告生成器
         ├── 效果验收标准.xlsx  # 效果验收标准（eval）
-        └── results/           # 产物：eval_report_v2.html / eval_summary.json / per_sample_details.csv
+        └── results/           # 产物：eval_report_v2_<数据集>.html / eval_summary.json / per_sample_details.csv
 ```
 
 ---
@@ -94,7 +94,7 @@ bash quickstart.sh eval bench all            # 全部（默认不含 aime25 / ~~
 
 ## 报告产物
 
-### 效果评测：`eval_report_v2.html`（每数据集一份，对外交付物）
+### 效果评测：`eval_report_v2_<数据集>.html`（每数据集一份，对外交付物）
 
 报告结构如下，数据全部来自 evalscope 落盘产物（reviews / reports/*.json / task_config.yaml / 日志）：
 
@@ -112,7 +112,7 @@ thvv/eval/results/<provider>-<model>-<timestamp>/
 ├── all_eval_summary.json        # 总汇总（仅 run 根一份）
 ├── eval_results.tar.gz          # 打包归档（含全部原始产物）
 └── arxivmath/
-    ├── eval_report_v2.html      # 效果评测报告（交付物）
+    ├── eval_report_v2_arxivmath.html  # 效果评测报告（文件名随数据集变化）
     ├── eval_summary.json        # 分数摘要
     ├── per_sample_details.csv   # 逐题明细
     ├── configs/task_config.yaml # 实际生效配置
