@@ -42,7 +42,7 @@ An all-in-one verification toolkit for running **performance load tests** and **
         ├── scripts/run_eval.py       # Evaluation engine (pre-checks + rate-limit retries + packaging)
         ├── scripts/eval_report_v2.py # Report generator
         ├── 效果验收标准.xlsx  # Quality acceptance criteria (eval)
-        └── results/           # Artifacts: eval_report_v2_<dataset>.html / eval_summary.json / per_sample_details.csv
+        └── results/           # Artifacts: <dataset>.html / eval_summary.json / per_sample_details.csv
 ```
 
 ---
@@ -94,7 +94,7 @@ For datasets requiring an LLM Judge (`hle` / `simple_qa`; `all` enforces this to
 
 ## Report Artifacts
 
-### Quality Evaluation: `eval_report_v2_<dataset>.html` (one per dataset; the delivery artifact)
+### Quality Evaluation: `<dataset>.html` (one per dataset; the delivery artifact)
 
 Six-chapter template, with all data sourced from evalscope on-disk outputs (reviews / reports/*.json / task_config.yaml / logs):
 
@@ -112,7 +112,7 @@ thvv/eval/results/<provider>-<model>-<timestamp>/
 ├── all_eval_summary.json        # Overall summary (one per run root)
 ├── eval_results.tar.gz          # Packaged archive (contains all raw artifacts)
 └── arxivmath/
-    ├── eval_report_v2_arxivmath.html  # Evaluation report (filename varies by dataset)
+    ├── arxivmath.html           # Evaluation report (filename varies by dataset)
     ├── eval_summary.json        # Score summary
     ├── per_sample_details.csv   # Per-question details
     ├── configs/task_config.yaml # Actually applied config

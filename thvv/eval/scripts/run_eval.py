@@ -1025,8 +1025,8 @@ def _run_with_retry(cmd, output_dir, model_name, dataset_label):
 # ---------------------------------------------------------------------------
 
 # v2 效果评测报告文件名模板（六章模版：核心结论/效果稳定性/性能/配置/逐题证据/异常跳过）
-# 文件名随数据集变化，多数据集产物平铺/对外交付时不会撞名
-_V2_REPORT_NAME_FMT = 'eval_report_v2_{dataset}.html'
+# 文件名直接用数据集名（<dataset>.html）：多数据集产物平铺/对外交付时不会撞名
+_V2_REPORT_NAME_FMT = '{dataset}.html'
 
 
 def v2_report_name(dataset_label):
@@ -1527,7 +1527,7 @@ def main():
 
     _save_overall_summary(all_summaries, args.provider, args.model_name, result_base)
     # 按数据集生成产物：在每个数据集的 output_dir 下生成该数据集独立的
-    # per_sample_details.csv（六章模版报告 eval_report_v2_<数据集>.html 已在单数据集执行阶段生成）。
+    # per_sample_details.csv（六章模版报告 <数据集>.html 已在单数据集执行阶段生成）。
     # 数据集级不再重复生成 all_eval_summary.json / eval_results.tar.gz——
     # 汇总只留根目录一份，打包只留 run 根一份，避免内容重复的产物。
     # 必须早于父级打包 —— per_sample_details.csv 在这里才生成，否则进不了父级 tar.gz。
@@ -1545,13 +1545,13 @@ def main():
 def _export_per_dataset_artifacts(all_summaries):
     """在每个数据集的 output_dir 下生成该数据集独立的明细产物。
 
-    v2 报告（eval_report_v2_<数据集>.html）已在单数据集执行阶段生成，这里补齐逐题明细：
+    v2 报告（<数据集>.html）已在单数据集执行阶段生成，这里补齐逐题明细：
       eval/results/<run>/
       ├── all_eval_summary.json           # 总汇总（仅 run 根一份）
       ├── eval_results.tar.gz             # 打包归档（仅 run 根一份）
       ├── arxivmath/
       │   ├── eval_summary.json           # 数据集摘要
-      │   ├── eval_report_v2_<数据集>.html  # 六章模版报告（执行阶段已生成）
+      │   ├── <数据集>.html  # 六章模版报告（执行阶段已生成）
       │   ├── per_sample_details.csv      # 逐题明细
       │   ├── logs/  configs/             # evalscope 原始日志与配置
       │   └── （predictions/ reviews/ reports/ 打包后被清理，见 _cleanup_redundant_artifacts）
@@ -1582,7 +1582,7 @@ def _cleanup_redundant_artifacts(all_summaries):
     - predictions/  模型原始预测（thinking 长文本，通常占产物 60%+），
       其"模型回复"已完整提炼进 per_sample_details.csv 的 response 列；
     - reviews/      逐题评判原始行，得分与题目已提炼进同一 CSV；
-    - reports/      evalscope 原生 HTML/JSON 报告，与 eval_report_v2_<数据集>.html
+    - reports/      evalscope 原生 HTML/JSON 报告，与 <数据集>.html
       及 eval_summary.json 内容重复。
 
     三者均已随 eval_results.tar.gz 归档，散目录里保留只会放大体积。

@@ -195,7 +195,7 @@ results/zhipu-glm-5.2-20260702_180000/
 ├── all_eval_summary.json          # 总汇总（仅 run 根一份）
 ├── eval_results.tar.gz            # 打包归档（仅 run 根一份，含全部原始产物）
 └── aime25/                        # 各数据集子目录
-    ├── eval_report_v2_aime25.html # v2 效果评测报告（六章模版，对外交付物；文件名随数据集）
+    ├── aime25.html # v2 效果评测报告（六章模版，对外交付物；文件名随数据集）
     ├── eval_summary.json          # 单数据集摘要
     ├── per_sample_details.csv     # 逐题明细（sample_id / score / request / response / 逐题缓存命中）
     ├── usage_ledger.jsonl         # 逐次调用 usage 流水（缓存命中率的原始证据，不含正文）
@@ -205,10 +205,10 @@ results/zhipu-glm-5.2-20260702_180000/
 ```
 
 > 原始 `predictions/`、`reviews/`、`reports/`（evalscope 原生产物，通常占体积 90%+）
-> 的信息已提炼进 `per_sample_details.csv` 与 `eval_report_v2_<数据集>.html`，
+> 的信息已提炼进 `per_sample_details.csv` 与 `<数据集>.html`，
 > 打包归档后会自动从散目录中清理；失败的数据集保留原始产物便于排障。
 
-### v2 效果评测报告（eval_report_v2_<数据集>.html）包含
+### v2 效果评测报告（<数据集>.html）包含
 
 六章结构，对齐《效果测试报告模版》：
 1. **核心结论**：正确率 / 题目数 / 跳过数 KPI 卡 + **缓存命中**（Token 命中率、命中调用占比、字段合规、被测模型调用命中率、单题命中率 P50/P10、零命中题数；按调用来源拆分：被测模型 / 用户模拟器；另按题内第 N 次调用给出预热曲线、按请求消息条数给出对话深度）——缓存相关数据全部集中在第一章，其他章节不再重复
@@ -272,7 +272,7 @@ bash quickstart.sh eval bench tau2_bench --subset_list airline,retail,telecom
 - `<dataset>/eval_summary.json` 的 `throughput_stats` 字段：TPM/TPS 变化统计，含窗口大小、各窗口明细与分位。
 - `all_eval_summary.json` 的 `cache_stats` 字段：整次运行所有数据集合并后的统计结果。
 - `<dataset>/per_sample_details.csv`：新增 `cache_calls / prompt_tokens / cached_tokens / cache_hit_rate / cache_hit_calls / cache_non_compliant_calls` 列，统计的是被测模型自身的调用。
-- `eval_report_v2_<数据集>.html` 中的缓存指标集中在第一章「缓存命中」（KPI 卡片 + 按调用来源 / 按题内调用序号 / 按对话深度三张表），另在第五章逐题表给出「平均缓存命中率」列；第三章不再重复缓存指标。
+- `<数据集>.html` 中的缓存指标集中在第一章「缓存命中」（KPI 卡片 + 按调用来源 / 按题内调用序号 / 按对话深度三张表），另在第五章逐题表给出「平均缓存命中率」列；第三章不再重复缓存指标。
 
 单独重算：
 
@@ -316,7 +316,7 @@ python3 scripts/perf_stats.py  results/<run>/tau2_bench --model <被测模型名
 ### 结果打包
 
 评测完成后自动打包为 `eval_results.tar.gz`，包含：
-- v2 效果评测报告（eval_report_v2_<数据集>.html）
+- v2 效果评测报告（<数据集>.html）
 - 总汇总 JSON / 各数据集 eval_summary.json
 - 逐题明细 per_sample_details.csv
 - 逐次调用 usage 流水 usage_ledger.jsonl（缓存命中率证据）
