@@ -35,7 +35,6 @@ An all-in-one verification toolkit for running **performance load tests** and **
     │   │                      # export_failure_details.py (failure CSV) / setup_tokenizer.py / sla_eval.py (SLA verdicts)
     │   ├── datasets/          # 10 datasets (1k~200k, 7 main buckets + 3 prefix-cache scenarios)
     │   ├── references/        # 性能测试报告模板.xlsx (report template)
-    │   ├── 性能验收标准.xlsx  # Performance acceptance criteria (perf)
     │   └── results/           # Artifacts: 性能测试报告.html + 性能测试报告.xlsx
     └── eval/                  # Quality evaluation
         ├── run.sh             # Subcommands: check / bench / list
@@ -139,39 +138,7 @@ thvv/eval/results/<provider>-<model>-<timestamp>/
 
 ---
 
-## Acceptance Criteria
-
-### Performance Acceptance Criteria
-
-Vendor performance acceptance criteria are defined in [`性能验收标准.xlsx`](./thvv/perf/性能验收标准.xlsx). Key points:
-
-**Test Requirements**
-
-1. Low-concurrency warm-up for 5min to eliminate cold-start effects
-2. Concurrency-ladder load testing for 10–15min, collect data after stabilization; when TPM/RPM falls short of the committed spec, request success rate must meet the SLA
-
-**TTFT / Request Success Rate** (by incremental InputTokens, cache excluded)
-
-| InputTokens | Tencent-side standard |
-|------|------|
-| <6K | P90<5s |
-| 6～16K | P90<5s |
-| 16～32K | P90<8s |
-| 32～64K | P90<15s |
-| 64～128K | P90<35s |
-| 128～256K | P90<70s |
-
-**OTPS**
-
-| Model active params | Tier | Tencent-side OTPS requirement |
-|------|------|------|
-| >10B models | L1 | ≥ 30 tokens/s |
-| | L2 | ≥ 10 tokens/s |
-| ≤10B models | / | ≥ 100 tokens/s |
-
-> All of the above are verified using the Tencent-provided benchmark; see `thvv/perf/性能验收标准.xlsx` for details.
-
-### Quality Acceptance Criteria
+## Quality Acceptance Criteria
 
 Quality acceptance baselines are defined in [`效果验收标准.xlsx`](./thvv/eval/效果验收标准.xlsx), with per-model accuracy allowed to float within **±2-4%**:
 
