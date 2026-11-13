@@ -11,7 +11,7 @@ An all-in-one verification toolkit for running **performance load tests** and **
 | Module | Description | Status |
 |------|------|:---:|
 | `perf` | Performance load testing: full combination of input-length buckets (1k–200k) × concurrency ladders, with success-rate early stopping and adaptive temperature / tokenizer, producing dual reports — **HTML (37-column full metrics + failed-request details) + xlsx** | ✅ |
-| `eval` | Quality evaluation: 11 mainstream datasets (AIME25/26, GPQA-Diamond, HLE, tau2-bench, MMLU-Pro, SimpleQA, LongBench v2, LiveCodeBench, SWE-Bench…), automatically producing the **evaluation report** | ✅ |
+| `eval` | Quality evaluation: 18 mainstream datasets (ArXiv-Math, AIME25, GPQA-Diamond, HLE, tau2-bench, MMLU-Pro, SimpleQA, LongBench v2, LiveCodeBench, SWE-Bench…; ~~AIME2026~~ is deprecated, use ArXiv-Math instead), automatically producing the **evaluation report** | ✅ |
 
 ---
 
@@ -83,10 +83,10 @@ Common environment variables: `BUCKETS`, `CONCURRENCY_LADDER`, `BUCKET_COOLDOWN`
 ### 4. Quality Evaluation
 
 ```bash
-bash quickstart.sh eval list                 # List the 11 datasets
-bash quickstart.sh eval bench aime26         # Single dataset
-bash quickstart.sh eval bench aime26 --limit 30 --repeats 1 --eval_batch_size 10
-bash quickstart.sh eval bench all            # All datasets
+bash quickstart.sh eval list                 # List the 18 datasets
+bash quickstart.sh eval bench arxivmath      # Single dataset (~~aime26~~ is deprecated)
+bash quickstart.sh eval bench arxivmath --limit 30 --repeats 1 --eval_batch_size 10
+bash quickstart.sh eval bench all            # All datasets (excludes aime25 / ~~aime26~~ / swe_bench_pro)
 ```
 
 For datasets requiring an LLM Judge (`hle` / `simple_qa`; `all` enforces this too), provide `--judge_api_key`. The judge model and base URL have defaults (`deepseek-v4-pro` @ `https://api.deepseek.com/v1`) and can be overridden via `--judge_model / --judge_base_url`. Rate limits automatically wait 60s and resume with `--use-cache`. See `thvv/eval/README.md` for details.
@@ -112,7 +112,7 @@ Typical results directory:
 thvv/eval/results/<provider>-<model>-<timestamp>/
 ├── all_eval_summary.json        # Overall summary (one per run root)
 ├── eval_results.tar.gz          # Packaged archive (contains all raw artifacts)
-└── aime26/
+└── arxivmath/
     ├── eval_report_v2.html      # Evaluation report (delivery artifact)
     ├── eval_summary.json        # Score summary
     ├── per_sample_details.csv   # Per-question details
@@ -177,7 +177,7 @@ Quality acceptance baselines are defined in [`效果验收标准.xlsx`](./thvv/e
 
 | Dataset | kimi-k3 | kimi-k3.1-pro | HY3 | deepseek-v4-flash-0731 | hy4-preview | glm-5.3-flash | glm-5.3 | deepseek-v4.1-flash-1017 |
 |------|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| AIME2026 | 95 | 99.58 | 96.63 | 95.67 | 96 | 93.75 | 93.12 | 98.96 |
+| ~~AIME2026~~ (deprecated, use ArXiv-Math) | ~~95~~ | ~~99.58~~ | ~~96.63~~ | ~~95.67~~ | ~~96~~ | ~~93.75~~ | ~~93.12~~ | ~~98.96~~ |
 | HLE | 44 | 52.00 | 29.74 | 32.35 | 34.33 | 29.24 | 40.18 | 38.32 |
 | MMLU_Pro | 89.52 | 90.44 | 87.36 | 87.25 | 85.96 | 87.58 | 88.08 | 88.17 |
 | Simple_QA | 46.1 | 60.73 | 34.41 | 37.56 | 33.7 | 34.56 | 39.37 | 44.06 |

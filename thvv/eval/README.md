@@ -1,6 +1,6 @@
 # 大模型效果评测工具包
 
-本工具包用于对大模型进行**精度/效果评测**，基于 [EvalScope](https://github.com/modelscope/evalscope) 评测框架，支持 17 个主流数据集（含 6 个视频/图像多模态数据集）。
+本工具包用于对大模型进行**精度/效果评测**，基于 [EvalScope](https://github.com/modelscope/evalscope) 评测框架，支持 18 个主流数据集（含 6 个视频/图像多模态数据集）。
 
 **适用任意兼容 OpenAI 协议的模型 API**——只需在 `configs/.env` 中填写你的地址、密钥和模型名即可。
 
@@ -27,7 +27,8 @@
 | 数据集 | 说明 | 默认 repeats | 需要 Judge | 需要 Docker |
 |--------|------|:---:|:---:|:---:|
 | `aime25` | AIME25 数学竞赛题 | 16 (pass@16) | ❌ | ❌ |
-| `aime26` | AIME 2026 数学竞赛题 | 16 | ❌ | ❌ |
+| ~~`aime26`~~ | ~~AIME 2026 数学竞赛题~~ **已废弃，数学类改用 `arxivmath`** | 16 | ❌ | ❌ |
+| `arxivmath` | ArXiv-Math 研究级数学题（103 题，4 个子集） | 16 | ❌ | ❌ |
 | `gpqa_diamond` | GPQA-Diamond 研究生级问答 | 3 | ❌ | ❌ |
 | `hle` | Humanity's Last Exam 综合评测 | 1 | ✅ | ❌ |
 | `tau2_bench` | tau2-bench Agent 对话评测 | 5 | ❌ | ❌ |
@@ -130,16 +131,16 @@ bash quickstart.sh eval list
 
 ```bash
 # 单数据集
-bash quickstart.sh eval bench aime25
+bash quickstart.sh eval bench arxivmath
 
 # 多数据集
-bash quickstart.sh eval bench aime25,gpqa_diamond
+bash quickstart.sh eval bench arxivmath,gpqa_diamond
 
-# 全部数据集（默认不含 aime25 和 swe_bench_pro，需要请显式指定）
+# 全部数据集（默认不含 aime25、aime26 和 swe_bench_pro，需要请显式指定）
 bash quickstart.sh eval bench all
 
 # 带参数
-bash quickstart.sh eval bench aime25 --repeats 8 --eval_batch_size 20
+bash quickstart.sh eval bench arxivmath --repeats 8 --eval_batch_size 20
 ```
 
 ### 4.1 常用可选参数

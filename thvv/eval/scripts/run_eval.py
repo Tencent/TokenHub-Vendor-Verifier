@@ -2,7 +2,7 @@
 """
 evalscope 通用效果评测脚本
 
-支持 17 个数据集（含 6 个视频/图像多模态数据集）的 LLM 精度评测，基于 evalscope 框架。
+支持 18 个数据集（含 6 个视频/图像多模态数据集）的 LLM 精度评测，基于 evalscope 框架。
 包含预检查、限流重试、HTML 报告生成、结果打包。
 
 用法示例:
@@ -94,7 +94,15 @@ SUPPORTED_DATASETS = {
         'default_eval_batch_size': 30,
         'judge_strategy': 'auto',
         'requires_judge_model': False,
-        'description': 'AIME 2026 数学竞赛题评测',
+        'description': 'AIME 2026 数学竞赛题评测（已废弃，数学类改用 arxivmath）',
+    },
+    'arxivmath': {
+        'label': 'arxivmath',
+        'default_repeats': 16,
+        'default_eval_batch_size': 30,
+        'judge_strategy': 'auto',
+        'requires_judge_model': False,
+        'description': 'ArXiv-Math 研究级数学题评测（103 题，数学类主用）',
     },
     'gpqa_diamond': {
         'label': 'gpqa_diamond',
@@ -602,7 +610,8 @@ def get_result_dir(provider, model_name, benchmark, run_dir=None):
 
 
 # `--datasets all` 默认不包含的数据集（仍可显式指定，如 --datasets aime25）
-ALL_EXCLUDED_DATASETS = ('aime25', 'swe_bench_pro')
+# aime26 已废弃（数学类改用 arxivmath），不再进 all 默认集合
+ALL_EXCLUDED_DATASETS = ('aime25', 'aime26', 'swe_bench_pro')
 
 
 def resolve_datasets(datasets_arg):
@@ -701,6 +710,7 @@ def build_eval_command(args, dataset_key, run_dir=None):
     repo_map = {
         'aime25': 'evalscope--aime25',
         'aime26': 'evalscope--aime26',
+        'arxivmath': 'evalscope--arxivmath',
         'gpqa_diamond': 'AI-ModelScope--gpqa_diamond',
         'hle': 'cais--hle',
         'tau2_bench': 'evalscope--tau2-bench-data',
@@ -1531,7 +1541,7 @@ def _export_per_dataset_artifacts(all_summaries):
       eval/results/<run>/
       ├── all_eval_summary.json           # 总汇总（仅 run 根一份）
       ├── eval_results.tar.gz             # 打包归档（仅 run 根一份）
-      ├── aime26/
+      ├── arxivmath/
       │   ├── eval_summary.json           # 数据集摘要
       │   ├── eval_report_v2.html         # 六章模版报告（执行阶段已生成）
       │   ├── per_sample_details.csv      # 逐题明细

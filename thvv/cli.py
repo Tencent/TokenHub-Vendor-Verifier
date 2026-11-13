@@ -5,7 +5,7 @@
   thvv perf bench 1k 20 1
   thvv perf bench-all
   thvv perf report
-  thvv eval bench aime25
+  thvv eval bench arxivmath
   thvv eval list
   thvv check
   thvv install
@@ -51,7 +51,7 @@ def _run_subcommand(cmd: str, args: list[str]) -> int:
       thvv perf 1k 20 1   → quickstart.sh perf bench 1k 20 1
       thvv perf all       → quickstart.sh perf bench-all
       thvv perf report    → quickstart.sh perf report
-      thvv eval aime25    → quickstart.sh eval bench aime25
+      thvv eval arxivmath → quickstart.sh eval bench arxivmath
       thvv eval list      → quickstart.sh eval list
     """
     if cmd == "perf" and args:
@@ -116,8 +116,8 @@ Commands:
            thvv perf all                        全档矩阵
            thvv perf report                     生成报告
 
-  eval     效果评测 — 11 个数据集 (AIME/GPQA/HLE/MMLU-Pro/...)
-           thvv eval <datasets>                 评测 (如 thvv eval aime25)
+  eval     效果评测 — 18 个数据集 (ArXiv-Math/GPQA/HLE/MMLU-Pro/...)
+           thvv eval <datasets>                 评测 (如 thvv eval arxivmath)
            thvv eval list                       列出数据集
 
   check    环境检查

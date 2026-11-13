@@ -11,7 +11,7 @@
 | 模块 | 说明 | 状态 |
 |------|------|:---:|
 | `perf` | 性能压测：1k~200k 输入长度档位 × 并发梯度全组合，含成功率早停、温度 / tokenizer 自适应，产出 **HTML（37 列全指标 + 失败请求明细）+ xlsx 双报告** | ✅ |
-| `eval` | 效果评测：17 个主流数据集（AIME25/26、GPQA-Diamond、HLE、tau2-bench、MMLU-Pro、SimpleQA、LongBench v2、LiveCodeBench、SWE-Bench，及 MSR-VTT、MVBench、TVBench、MathVision、HallusionBench、Video-MME-v2 六个多模态数据集），自动产出**效果评测报告** | ✅ |
+| `eval` | 效果评测：18 个主流数据集（ArXiv-Math、AIME25、GPQA-Diamond、HLE、tau2-bench、MMLU-Pro、SimpleQA、LongBench v2、LiveCodeBench、SWE-Bench，及 MSR-VTT、MVBench、TVBench、MathVision、HallusionBench、Video-MME-v2 六个多模态数据集；~~AIME2026~~ 已废弃，数学类改用 ArXiv-Math），自动产出**效果评测报告** | ✅ |
 
 ---
 
@@ -83,10 +83,10 @@ bash quickstart.sh perf report               # 从 results/ 重新生成报告
 ### 4. 效果评测
 
 ```bash
-bash quickstart.sh eval list                 # 列出 17 个数据集
-bash quickstart.sh eval bench aime26         # 单数据集
-bash quickstart.sh eval bench aime26 --limit 30 --repeats 1 --eval_batch_size 10
-bash quickstart.sh eval bench all            # 全部（默认不含 aime25 / swe_bench_pro，需显式指定）
+bash quickstart.sh eval list                 # 列出 18 个数据集
+bash quickstart.sh eval bench arxivmath      # 单数据集（数学类主用；~~aime26~~ 已废弃）
+bash quickstart.sh eval bench arxivmath --limit 30 --repeats 1 --eval_batch_size 10
+bash quickstart.sh eval bench all            # 全部（默认不含 aime25 / ~~aime26~~ / swe_bench_pro，需显式指定）
 ```
 
 需 LLM Judge 的数据集（hle / simple_qa，`all` 同样强制）需提供 `--judge_api_key`；judge 模型与地址有默认值（`deepseek-v4-pro` @ `https://api.deepseek.com/v1`），可用 `--judge_model / --judge_base_url` 覆盖。限流自动等待 60s 并注入 `--use-cache` 续跑。详见 `thvv/eval/README.md`。
@@ -112,7 +112,7 @@ bash quickstart.sh eval bench all            # 全部（默认不含 aime25 / sw
 thvv/eval/results/<provider>-<model>-<timestamp>/
 ├── all_eval_summary.json        # 总汇总（仅 run 根一份）
 ├── eval_results.tar.gz          # 打包归档（含全部原始产物）
-└── aime26/
+└── arxivmath/
     ├── eval_report_v2.html      # 效果评测报告（交付物）
     ├── eval_summary.json        # 分数摘要
     ├── per_sample_details.csv   # 逐题明细
@@ -176,7 +176,7 @@ thvv/eval/results/<provider>-<model>-<timestamp>/
 
 | 数据集 | kimi-k3 | kimi-k3.1-pro | HY3 | deepseek-v4-flash-0731 | hy4-preview | glm-5.3-flash | glm-5.3 | deepseek-v4.1-flash-1017 |
 |------|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| AIME2026 | 95 | 99.58 | 96.63 | 95.67 | 96 | 93.75 | 93.12 | 98.96 |
+| ~~AIME2026~~（已废弃，改用 ArXiv-Math） | ~~95~~ | ~~99.58~~ | ~~96.63~~ | ~~95.67~~ | ~~96~~ | ~~93.75~~ | ~~93.12~~ | ~~98.96~~ |
 | HLE | 44 | 52.00 | 29.74 | 32.35 | 34.33 | 29.24 | 40.18 | 38.32 |
 | MMLU_Pro | 89.52 | 90.44 | 87.36 | 87.25 | 85.96 | 87.58 | 88.08 | 88.17 |
 | Simple_QA | 46.1 | 60.73 | 34.41 | 37.56 | 33.7 | 34.56 | 39.37 | 44.06 |
