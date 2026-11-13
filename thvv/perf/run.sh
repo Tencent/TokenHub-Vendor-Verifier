@@ -79,6 +79,43 @@ if [[ "$PROTOCOL" != "openai" && "$PROTOCOL" != "anthropic" ]]; then
     exit 1
 fi
 
+# ---- 连接配置校验 ----
+# 背景：evalscope 对 --url 做过「无端点后缀就自动补」的处理，空串会被补成 '/chat/completions'，
+# 随后 aiohttp 直接抛 InvalidUrlClientError: /chat/completions（相对路径，非绝对 URL）。
+# 因为脚本带了 --no-test-connection，这个错误不会在启动阶段暴露，而是每个请求失败一次，
+# 表现为大量 ERROR 堆栈但成功率 0。这里把校验前置。
+validate_conn() {
+    local bad=0
+    if [[ -z "${API_URL:-}" ]]; then
+        echo "[fail] API_URL 为空：evalscope 会把它补成 '/chat/completions'，所有请求都会报 InvalidUrlClientError。" >&2
+        echo "       请检查 configs/.env（或环境变量）里的 API_URL。" >&2
+        bad=1
+    elif [[ ! "${API_URL}" =~ ^https?:// ]]; then
+        echo "[fail] API_URL 不是合法的 http(s) 绝对地址：'${API_URL}'" >&2
+        bad=1
+    else
+        case "$PROTOCOL" in
+            openai)
+                if [[ "${API_URL}" != */chat/completions ]]; then
+                    echo "[warn] PROTOCOL=openai 但 API_URL 未以 /chat/completions 结尾，evalscope 会在其后自动追加该路径：${API_URL}/chat/completions" >&2
+                fi ;;
+            anthropic)
+                if [[ "${API_URL}" != */messages ]]; then
+                    echo "[warn] PROTOCOL=anthropic 但 API_URL 未以 /messages 结尾：${API_URL}" >&2
+                fi ;;
+        esac
+    fi
+    if [[ -z "${API_KEY:-}" ]]; then
+        echo "[fail] API_KEY 未设置，请检查 configs/.env（或环境变量）。" >&2
+        bad=1
+    fi
+    if [[ -z "${MODEL_NAME:-}" ]]; then
+        echo "[fail] MODEL_NAME 未设置，请检查 configs/.env（或环境变量）。" >&2
+        bad=1
+    fi
+    return $bad
+}
+
 # 采样温度：按 MODEL_NAME 自动决定，无需 setup_patch.sh 改 evalscope 包
 #   - Kimi / moonshot 系列（thinking 模型）在 temperature=0 时输出异常，需 1.0
 #   - 其他模型（deepseek/glm/minimax 等）保持 0.0，性能更稳定
@@ -296,9 +333,7 @@ cmd_bench() {
     local p="${3:-10}"
     local ds="${DATASET_DIR}/perf_zh_${bucket}.jsonl"
     [[ ! -f "$ds" ]] && { echo "数据集不存在: $ds"; exit 1; }
-    [[ -z "$API_KEY" ]] && { echo "[fail] API_KEY 未设置，请编辑 configs/.env"; exit 1; }
-    [[ -z "$API_URL" ]] && { echo "[fail] API_URL 未设置，请编辑 configs/.env"; exit 1; }
-    [[ -z "$MODEL_NAME" ]] && { echo "[fail] MODEL_NAME 未设置，请编辑 configs/.env"; exit 1; }
+    validate_conn || exit 1
 
     local range=($(bucket_range "$bucket"))
     local minlen=${range[0]} maxlen=${range[1]}
@@ -394,6 +429,7 @@ print(f'{success / max(total, 1) * 100:.2f}')
 # 若中途 Ctrl+C 中断或异常失败，请手动运行: bash run.sh report --client "供应商名称"
 cmd_bench_all() {
     ensure_perf_deps
+    validate_conn || exit 1
     auto_detect_tokenizer
     ensure_tokenizer_cached
 
