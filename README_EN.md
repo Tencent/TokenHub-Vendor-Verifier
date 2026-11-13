@@ -138,28 +138,6 @@ thvv/eval/results/<provider>-<model>-<timestamp>/
 
 ---
 
-## Performance Acceptance Criteria
-
-Performance admission is evaluated **per context-length bucket**, using the vendor's own measurements as the baseline:
-
-| Context length | Usage / Share | Valid samples | TPS P50 | TPS P5 | TTFT P50 | TTFT P95 | KV hit | Completeness |
-|------|------|------|:---:|:---:|:---:|:---:|:---:|:---:|
-| ≤128K | 788,793,378 (75.0%) | 786,839,442 (valid 99.8%) | 58.5 | 34.5 | 2.61s | 9.17s | 91.60% | 5/5 |
-| 128K~200K | 212,361,974 (20.2%) | 212,331,527 (valid 100.0%) | 61.8 | 35.9 | 3.28s | 10.85s | 95.73% | 5/5 |
-| 200K~1M | 51,133,366 (4.9%) | 51,111,648 (valid 100.0%) | 63.7 | 36.4 | 4.18s | 15.77s | 95.36% | 5/5 |
-| >1M | No traffic in this bucket | — | — | — | — | — | — | — |
-
-**All buckets**
-
-| Usage | Valid samples | TPS P50 | TPS P5 | TTFT P50 | TTFT P95 | KV hit | Completeness |
-|------|------|:---:|:---:|:---:|:---:|:---:|:---:|
-| 1,051,223,277 | 1,050,282,617 | 59.4 | 34.8 | 2.84s | 9.84s | 93.46% | 5/5 |
-
-> The 128K / 200K / 1M boundaries are for display only and do not take part in the access-point pass/fail decision; the >1M bucket currently has no traffic.
-> Metrics follow the load-test artifacts: TPS / TTFT are percentiles, KV hit is the prefix-cache hit rate, Completeness is the number of passed integrity checks.
-
----
-
 ## Quality Acceptance Criteria
 
 Quality acceptance baselines are defined in [`效果验收标准.xlsx`](./thvv/eval/效果验收标准.xlsx), with per-model accuracy allowed to float within **±2-4%**:
