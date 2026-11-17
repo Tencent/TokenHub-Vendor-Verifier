@@ -375,9 +375,10 @@ cmd_bench() {
     # 报告出口（跑完才会到这里；Ctrl+C 中断会直接终止脚本，不生成报告）：
     #   性能测试报告.html = 阅读版：总体结论 + 并发梯度矩阵 + 失败原因聚合 + 失败请求逐条明细
     #   性能测试报告.xlsx = 指标交付版：「性能指标」45 列聚合指标 + 「失败请求详情」sheet（14 列）
-    # 先重算命中率并写回 summary，报告才能显示真实值（evalscope 流式 usage 解析有缺陷，
-    # DeepSeek 把 usage 挂在有 choices 的 chunk 上，原生 KV Cache Hit Rate 恒为 0）
-    echo "[report] 重算缓存命中率并写回指标 ..."
+    # 先重算命中率，报告才能显示真实值（evalscope 流式 usage 解析有缺陷，
+    # DeepSeek 把 usage 挂在有 choices 的 chunk 上，原生 KV Cache Hit Rate 恒为 0）。
+    # 响应体内有 usage 明细 → 重算并写回 summary；没有明细 → 沿用 summary 原生值，不写回
+    echo "[report] 重算缓存命中率（有明细则写回 summary，无明细沿用原生值）..."
     python3 scripts/patch_cache_metrics.py --results-dir results \
         --filter "perf-${bucket}-${ts}" \
         --write-back \
@@ -630,7 +631,13 @@ cmd_bench_all() {
     # 报告出口：跨档位汇总性能测试报告.html（阅读版）+ 性能测试报告.xlsx（指标交付版）
     # （--run-dir 指向组目录；gen_perf_dashboard 的 os.walk 已开启 followlinks，
     #   组目录内的 run 软链可正常扫描，且不会混入 results/ 下其他历史 run）
-    tlog "[report] 重算缓存命中率并写回指标（evalscope 原生恒为 0）..."
+    # 只统计本次跑出的 run：否则 results/ 下的历史构建会被一起算进交付表格
+    # （必须在命中率重算之前定义，否则 --filter 为空会扫描全部历史 run）
+    local -a xlsx_filter=()
+    if [[ ${#group_runs[@]} -gt 0 ]]; then
+        xlsx_filter=(--filter "${group_runs[@]}")
+    fi
+    tlog "[report] 重算缓存命中率（有明确 usage 明细则写回 summary，无明细沿用原生值）..."
     python3 scripts/patch_cache_metrics.py --results-dir results \
         ${xlsx_filter[@]+"${xlsx_filter[@]}"} \
         --write-back \
@@ -644,11 +651,6 @@ cmd_bench_all() {
         --out "$group_dir/性能测试报告.html" \
         2>&1 | tee -a "$group_log" || tlog "[warn] 报告生成失败，可手动运行: bash run.sh report --run-dir $group_dir"
     tlog "[report] 生成 Excel 指标报告 ..."
-    # 只统计本次跑出的 run：否则 results/ 下的历史构建会被一起算进交付表格
-    local -a xlsx_filter=()
-    if [[ ${#group_runs[@]} -gt 0 ]]; then
-        xlsx_filter=(--filter "${group_runs[@]}")
-    fi
     python3 scripts/gen_report_from_db.py --results-dir results \
         ${xlsx_filter[@]+"${xlsx_filter[@]}"} \
         ${CLIENT:+--client "$CLIENT"} \
