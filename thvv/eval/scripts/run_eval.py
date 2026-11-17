@@ -73,6 +73,9 @@ _FALLBACK_DATASET_CONFIG = {
     'label': None,
     'default_repeats': 1,
     'default_eval_batch_size': 10,
+    # 采样温度统一口径：与流水线（maas_eval.py 步骤）一致固定 1.0。
+    # 数据集条目未显式声明时，一律走这个值；显式 --temperature 仍可覆盖。
+    'default_temperature': 1.0,
     'judge_strategy': 'auto',
     'requires_judge_model': False,
     'requires_sandbox': False,
@@ -99,7 +102,7 @@ SUPPORTED_DATASETS = {
     'arxivmath': {
         'label': 'arxivmath',
         'default_repeats': 1,
-        'default_eval_batch_size': 30,
+        'default_eval_batch_size': 15,
         'judge_strategy': 'auto',
         'requires_judge_model': False,
         'description': 'ArXiv-Math 研究级数学题评测（103 题，数学类主用）',
@@ -107,7 +110,7 @@ SUPPORTED_DATASETS = {
     'gpqa_diamond': {
         'label': 'gpqa_diamond',
         'default_repeats': 3,
-        'default_eval_batch_size': 20,
+        'default_eval_batch_size': 25,
         'judge_strategy': 'auto',
         'requires_judge_model': False,
         'description': 'GPQA-Diamond 研究生级问答评测',
@@ -115,7 +118,7 @@ SUPPORTED_DATASETS = {
     'hle': {
         'label': 'hle',
         'default_repeats': 1,
-        'default_eval_batch_size': 30,
+        'default_eval_batch_size': 60,
         'judge_strategy': 'llm',
         'requires_judge_model': True,
         'description': "Humanity's Last Exam 综合评测（需要 LLM Judge）",
@@ -123,7 +126,7 @@ SUPPORTED_DATASETS = {
     'tau2_bench': {
         'label': 'tau2_bench',
         'default_repeats': 5,
-        'default_eval_batch_size': 5,
+        'default_eval_batch_size': 30,
         'judge_strategy': 'auto',
         'requires_judge_model': False,
         'description': 'tau2-bench Agent 对话评测',
@@ -131,7 +134,7 @@ SUPPORTED_DATASETS = {
     'mmlu_pro': {
         'label': 'mmlu_pro',
         'default_repeats': 1,
-        'default_eval_batch_size': 30,
+        'default_eval_batch_size': 40,
         'judge_strategy': 'auto',
         'requires_judge_model': False,
         'description': 'MMLU-Pro 多学科多选题评测',
@@ -139,7 +142,7 @@ SUPPORTED_DATASETS = {
     'simple_qa': {
         'label': 'simple_qa',
         'default_repeats': 1,
-        'default_eval_batch_size': 30,
+        'default_eval_batch_size': 35,
         'judge_strategy': 'llm',
         'requires_judge_model': True,
         'description': 'SimpleQA 事实准确性评测（LLM-as-judge）',
@@ -155,7 +158,7 @@ SUPPORTED_DATASETS = {
     'live_code_bench': {
         'label': 'live_code_bench',
         'default_repeats': 1,
-        'default_eval_batch_size': 5,
+        'default_eval_batch_size': 15,
         'judge_strategy': 'auto',
         'requires_judge_model': False,
         'requires_docker': True,
@@ -164,7 +167,7 @@ SUPPORTED_DATASETS = {
     'swe_bench_verified_mini_agentic': {
         'label': 'swe_bench_verified_mini_agentic',
         'default_repeats': 1,
-        'default_eval_batch_size': 1,
+        'default_eval_batch_size': 10,
         'judge_strategy': 'auto',
         'requires_judge_model': False,
         'requires_docker': True,
@@ -647,6 +650,9 @@ def build_eval_command(args, dataset_key, run_dir=None):
     repeats = args.repeats if args.repeats is not None else ds_config['default_repeats']
     eval_batch_size = (args.eval_batch_size if args.eval_batch_size is not None
                        else ds_config['default_eval_batch_size'])
+    temperature = (args.temperature if args.temperature is not None
+                   else ds_config.get('default_temperature',
+                                      _FALLBACK_DATASET_CONFIG['default_temperature']))
     judge_strategy = (args.judge_strategy if args.judge_strategy is not None
                       else ds_config['judge_strategy'])
 
@@ -668,8 +674,8 @@ def build_eval_command(args, dataset_key, run_dir=None):
 
     # generation_config
     gen_config = {"max_tokens": max_tokens}
-    if args.temperature is not None:
-        gen_config["temperature"] = float(args.temperature)
+    if temperature is not None:
+        gen_config["temperature"] = float(temperature)
     if args.top_p is not None:
         gen_config["top_p"] = float(args.top_p)
     thinking_type = resolve_thinking_type(
@@ -735,9 +741,8 @@ def build_eval_command(args, dataset_key, run_dir=None):
             "api_key": args.api_key,
             "api_base": args.base_url,
             "generation_config": {
-                "temperature": float(args.temperature) if args.temperature is not None else (
-                    1.0 if str(args.model_name).lower().startswith(('kimi', 'moonshot')) else 0.0
-                ),
+                # 与主模型采样温度保持同一口径（注册表默认 1.0）
+                "temperature": float(temperature),
                 "max_tokens": 4096,
             },
         }
@@ -1384,6 +1389,8 @@ def main():
         print(f"  ✅ Provider Override: {args.provider_override}")
     if args.temperature is not None:
         print(f"  ✅ Temperature:  {args.temperature}")
+    else:
+        print(f"  ✅ Temperature:  {_FALLBACK_DATASET_CONFIG['default_temperature']}（注册表默认）")
     if args.top_p is not None:
         print(f"  ✅ Top P:        {args.top_p}")
     if args.max_tokens:

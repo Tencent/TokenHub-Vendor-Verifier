@@ -42,6 +42,12 @@
 | `mvbench` | MVBench 视频理解多选题（20 子集，默认 action_antonym）【视频】 | 1 | ❌ | ❌ |
 | `tvbench` | TVBench 时序视频理解多选题（10 子集，默认 action_count）【视频】 | 1 | ❌ | ❌ |
 | `videomme_v2` | Video-MME-v2 视频理解多选题（800 视频 / 3200 QA）【视频】 | 1 | ❌ | ❌ |
+
+> **默认参数口径（2026-11-17 起与流水线 `11771278` 对齐）**
+> - `repeats`：`aime25`/`aime26` = 16、`gpqa_diamond` = 3、`tau2_bench` = 5，其余 = 1
+> - 并发（`eval_batch_size`）：`arxivmath` = 15、`gpqa_diamond` = 25、`tau2_bench` = 30、`hle` = 60、`mmlu_pro` = 40、`simple_qa` = 35、`longbench_v2` = 10、`live_code_bench` = 15、`swe_bench_verified_mini_agentic` = 10
+> - 温度：所有数据集统一 **1.0**（与流水线一致；`--temperature` 可覆盖）
+> - 思考模式：默认开启（多模态数据集自动关闭），`max_tokens` 开思考 131072（kimi 98304）、关思考或 16384、多模态 8192
 | `math_vision` | MathVision 数学视觉推理【图像】 | 1 | ❌ | ❌ |
 | `hallusion_bench` | HallusionBench 幻觉检测（aAcc/qAcc/fAcc）【图像】 | 1 | ❌ | ❌ |
 
@@ -150,9 +156,10 @@ bash quickstart.sh eval bench arxivmath --repeats 8 --eval_batch_size 20
 | 参数 | 说明 |
 |------|------|
 | `--limit N` | 每个数据集最多跑 N 条（冒烟验证） |
-| `--repeats K` | 重复次数 / pass@k（默认按数据集，如 aime=16、gpqa=3、tau2=5） |
-| `--eval_batch_size N` | 并发数（默认按数据集） |
-| `--temperature` / `--top_p` / `--max_tokens` | 生成参数（缺省用服务端默认或引擎按模型推断） |
+| `--repeats K` | 重复次数 / pass@k（默认按数据集：aime=16、gpqa=3、tau2=5，其余=1） |
+| `--eval_batch_size N` | 并发数（默认按数据集，见上方「默认参数口径」） |
+| `--temperature` | 采样温度（默认 **1.0**，与流水线一致） |
+| `--top_p` / `--max_tokens` | 缺省用服务端默认或引擎按模型推断 |
 | `--thinking true/false` | 思考模式开关（默认开启） |
 | `--thinking-type <t>` | thinking.type 取值（默认按供应商映射：minimax→adaptive，其余→enabled） |
 | `--provider_override NAME` | 注入 `X-Provider-Override` 路由请求头 |
