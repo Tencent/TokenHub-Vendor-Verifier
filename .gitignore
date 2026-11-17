@@ -8,6 +8,9 @@ thvv/eval/datasets/*
 # 例外：MSR-VTT 视频样本集（走 Git LFS 管理，见 .gitattributes）
 !thvv/eval/datasets/msr_vtt/
 thvv/perf/results/
+# 由 CLS 线上流量派生的压测数据集（含脱敏后的线上内容，不入库）
+# 重建：scripts/cls_pull.py → scripts/build_hot_dataset.py --pool-jsonl ...
+thvv/perf/datasets_hot/
 thvv/cache/results/
 thvv/cache/reports/
 thvv/cache/cache_store/

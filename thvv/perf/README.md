@@ -14,17 +14,16 @@
 ```
 ├── run.sh                        # 一键入口（check / bench / bench-all / report）
 ├── requirements.txt              # Python 依赖（evalscope[perf]>=0.13.0）
-├── datasets/                     # 内置压测数据集（10 个）
-│   ├── perf_zh_1k.jsonl          # ~1k  tokens 中文对话
-│   ├── perf_zh_9k.jsonl          # ~9k  tokens
-│   ├── perf_zh_16k.jsonl         # ~16k tokens
-│   ├── perf_zh_32k.jsonl         # ~32k tokens
-│   ├── perf_zh_64k.jsonl         # ~64k tokens
-│   ├── perf_zh_128k.jsonl        # ~128k tokens
-│   ├── perf_zh_200k.jsonl        # ~200k tokens
-│   ├── perf_zh_9k_cold.jsonl     # 前缀缓存冷启动
-│   ├── perf_zh_9k_hot.jsonl      # 前缀缓存热命中
-│   └── perf_zh_9k_mix50.jsonl    # 50% 前缀缓存混合
+├── datasets_clean/               # 压测数据集（脱敏语料构建，带前缀缓存命中）
+│   ├── perf_zh_1k.jsonl          # ~1k  token，命中率 33.3%
+│   ├── perf_zh_9k.jsonl          # ~9k  token，命中率 67.2%
+│   ├── perf_zh_16k.jsonl         # ~16k token，命中率 67.2%
+│   ├── perf_zh_32k.jsonl         # ~32k token，命中率 89.5%
+│   ├── perf_zh_64k.jsonl         # ~64k token，命中率 89.5%
+│   ├── perf_zh_128k.jsonl        # ~128k token，命中率 89.5%
+│   ├── perf_zh_200k.jsonl        # ~200k token，命中率 96.0%
+│   ├── perf_zh_512k.jsonl        # ~512k token，命中率 96.8%
+│   └── perf_zh_1m.jsonl          # ~1m token（旧冷启动数据，默认不跑）
 ├── references/                   # 性能测试报告模板.xlsx
 ├── scripts/
 │   ├── setup_tokenizer.py        # 下载/校验 tokenizer（bench / bench-all / check 启动前自动调用）
@@ -119,7 +118,9 @@ bash run.sh bench 128k 500 128
 1k  9k  16k  32k  64k  128k  200k  512k  1m
 ```
 
-> `bench-all` 默认会跑全部 9 个档位，并发梯度按**档位能力上限**裁剪（`bucket_max_parallel`），
+> `bench-all` 默认跑 8 个档位（**暂不含 1m**，数据集 `perf_zh_1m.jsonl` 保留，
+> 需要时用 `BUCKETS="... 1m"` 或 `bash run.sh bench 1m` 单独跑）。
+> 并发梯度按**档位能力上限**裁剪（`bucket_max_parallel`），
 > 超长档位不再沿用 128 并发；200k 额外补一个 16 并发点（`bucket_extra_parallels`）：
 
 | 档位 | 单条 token | 实际并发梯度 | 默认请求数 | 说明 |
@@ -129,7 +130,7 @@ bash run.sh bench 128k 500 128
 | 128k | 144,000 | 1 8 32 | 20/60/120 | 64/128 并发删掉 |
 | 200k | 220,000 | 1 8 **16** | 20/60/80 | 32/64/128 删掉，补 16 观察中段拐点 |
 | 512k | 540,000 | 1 8 | 20/60 | 32/64/128 并发删掉 |
-| 1m | 1,030,000 | 1 8 | 20/60 | 32/64/128 并发删掉 |
+| 1m | 1,030,000 | 1 8 | 20/60 | 32/64/128 并发删掉；**默认 bench-all 不跑** |
 
 > ⚠️ 高并发点的 TPM 会超过 1000 万（实测：32k×128 约 1117 万、64k×64 约 1251 万、
 > 128k×32 约 1317 万、200k×16 约 1050~1350 万）。若被测网关有硬性 TPM 配额，
@@ -138,7 +139,8 @@ bash run.sh bench 128k 500 128
 > 实测更快时真实 TPM 会是它的数倍，**不能当硬限流用**；要严格限速请用 evalscope 的 `--rate`。
 
 ```bash
-N_1m=5 bash run.sh bench-all                        # 1m 档只跑 5 条
+BUCKETS="1k 9k 16k 32k 64k 128k 200k 512k 1m" bash run.sh bench-all   # 显式把 1m 加回默认全档
+bash run.sh bench 1m 5 1                            # 1m 档单独跑 5 条请求 / 并发 1
 CONCURRENCY_LADDER="1 8" bash run.sh bench-all      # 自定义梯度，仍受档位上限裁剪
 TPM_BUDGET=10000000 bash run.sh bench-all           # 额外叠加 TPM 预算（默认 0=不启用），与上限取较小者
 ```
@@ -210,19 +212,51 @@ python3 scripts/gen_report_from_db.py --results-dir results --client "供应商�
 ]
 ```
 
-| 档位 | 文件大小 | 输入长度范围 |
-|---|---|---|
-| 1k   | 8 MB   | 870–1,228 tokens |
-| 9k   | 69 MB  | 8,000–11,000 tokens |
-| 16k  | 125 MB | 14,000–18,000 tokens |
-| 32k  | 251 MB | 28,000–36,000 tokens |
-| 64k  | 507 MB | 56,000–72,000 tokens |
-| 128k | 1.0 GB | 112,000–144,000 tokens |
-| 200k | 567 MB | 180,000–220,000 tokens |
-| 512k | 325 MB | 512,010–513,546 tokens（200 条） |
-| 1m   | 317 MB | 1,000,007–1,001,367 tokens（100 条） |
+### 缓存命中版本（当前默认）
 
-> `datasets/` 是真实目录，已内置各档主数据共 3.2GB，开箱即用。如需更换数据源，直接覆盖 `datasets/*.jsonl` 即可。
+`datasets_clean/perf_zh_<bucket>.jsonl` 已替换为由脱敏语料池构建的
+「带前缀缓存命中」版本：每条请求共享同一段长前缀（长度 = 目标命中率 × 档位长度），
+尾部内容各不相同，服务端 prefix cache 可复用，TTFT 与线上一致。
+
+| 档位 | 条数 | 前缀分组 | 目标命中率 | 公共前缀 |
+|---|---|---|---|---|
+| 1k   | 200 | 4×50 | 33.3% | ~341 token |
+| 9k   | 200 | 4×50 | 67.2% | ~6.2k |
+| 16k  | 200 | 4×50 | 67.2% | ~11k |
+| 32k  | 200 | 4×50 | 89.5% | ~29.5k |
+| 64k  | 200 | 4×50 | 89.5% | ~58.7k |
+| 128k | 200 | 4×50 | 89.5% | ~117.7k |
+| 200k | 150 | 4×37 | 96.0% | ~196.7k |
+| 512k | 100 | 4×25 | 96.8% | ~495.7k |
+| 1m   | 100 | —     | 0%（仍是旧冷启动数据，未生成缓存版） | — |
+
+命中率取值为压测目标口径（按档位设定）。
+构造方式与重现步骤见 `scripts/build_hot_dataset.py`。
+
+> 冷启动版本不再随仓库保留（占用 3.2GB）；需要 A/B 对比时用
+> `scripts/build_hot_dataset.py --dataset-dir <旧语料目录>` 重新生成即可。
+>
+> 注意：部分网关的响应体不返回 `usage` 明细，此时报告里的 `Cache Hit Rate`
+> 会恒为 0（测不到，而非未命中）；判断命中是否生效请对比同档位的 TTFT。
+
+### 重新生成
+
+```bash
+# 1) 准备脱敏语料池（内部流程，产物为 JSONL，不入库）
+#    每行一条语料，字段：{"system": "...", "texts": ["...", ...]}
+
+
+# 2) 按档位构造公共前缀 + 唯一尾部（长度沿用原档位区间）
+python3 scripts/build_hot_dataset.py \
+    --buckets 1k 9k 16k 32k 64k 128k 200k 512k \
+    --count 200 200 200 200 200 200 150 100 \
+    --pool-jsonl .cache/cls_clean.jsonl --out-dir datasets_hot
+
+# 3) 覆盖默认数据集（旧的直接替换，不保留备份）
+rm -rf datasets_clean && mv datasets_hot datasets_clean
+```
+
+### 长度区间
 
 ### 超长档位（512k / 1m）
 
@@ -292,7 +326,7 @@ python3 scripts/audit_dataset.py --in-dir datasets_clean --buckets 128k --limit 
 如「全国、会议」被判成 `国会`，模型审核不会命中）；控制字符与超长重复行数与原始语料完全一致（284 / 993 @128k），
 说明替换未引入新的质量问题。
 
-`run.sh` 默认优先使用 `datasets_clean/`，缺失时回落 `datasets/`；也可显式指定：
+`run.sh` 默认使用 `datasets_clean/`；也可显式指定其他目录：
 
 ```bash
 DATASET_DIR=datasets bash run.sh bench 128k 500 128   # 用原始语料
@@ -334,7 +368,7 @@ bash run.sh report --run-dir results/_group_<ts> --model "模型名"
 
 **Q: 如何只保留部分数据集以减小包体积？**
 
-删除 `datasets/` 下不需要的 `perf_zh_*.jsonl` 即可，脚本会自动跳过缺失的档位。
+删除 `datasets_clean/` 下不需要的 `perf_zh_*.jsonl` 即可，脚本会自动跳过缺失的档位。
 
 **Q: 失败请求详情包含哪些信息？**
 

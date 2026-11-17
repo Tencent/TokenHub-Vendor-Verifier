@@ -1,47 +1,66 @@
-# 压测数据集来源与许可
+# 压测数据集来源与说明
 
-本目录 `datasets/` 与 `datasets_clean/` 下的 `perf_zh_*.jsonl` 按档位来源分为两类。
+`datasets_clean/perf_zh_<bucket>.jsonl` 为当前使用的压测数据集，由**内部脱敏语料池**构建。
+原始网页语料与冷启动备份均已从仓库移除。
 
-## 一、1k / 9k / 16k / 32k / 64k / 128k / 200k
+## 一、语料
 
-真实中文网页与文档语料（法规条文、百科条目、产品手册、企业公开资料、学校通知等），
-由项目早期从公开网页抓取汇总而成，逐条来源未做留存。
+- 语料为内部脱敏后的中文长文本，按业务主题分组（system 相同即视为同一主题）
+- 语料不入库：`.gitignore` 已排除 `datasets_hot/` 与 `.cache/`，仓库内只保留成品数据集
+- 素材池与各档位的对应关系记录在 `datasets_clean/META.json`
 
-原始语料夹带涉政/涉台、翻墙、赌博、色情等内容，会触发供应商内容安全策略
-（如 HTTP 400 `data_inspection_failed`），因此 `datasets_clean/` 版本对命中片段做了
-等长替换（`scripts/sanitize_dataset.py`，详见 README「敏感内容脱敏」）。
+## 二、脱敏
 
-**请勿将 `datasets/` 原始语料对外分发**；`datasets_clean/` 仅用于模型性能压测，
-不用于训练。
+两层处理，均为**等长替换**（不改变 token 长度，避免扰动档位分布）：
 
-## 二、512k / 1m（超长上下文档位）
+1. **PII**：手机号、身份证、银行卡/长数字串、邮箱 → 等长假值
+   （如 `13800000000`、`1101010000...`、`aaaa@example.com`）
+2. **敏感词**：命中 `scripts/sensitive_words.txt` 的片段 → 等长中性填充
+   （复用 `sanitize_dataset.SpanFinder`，支持字间插空格变体）
 
-- **来源**：HuggingFace 数据集 [`wikimedia/wikipedia`](https://huggingface.co/datasets/wikimedia/wikipedia)，
-  config `20231101.zh`，split `train`，仅取 `text` 字段。
-- **许可**：中文维基百科文本采用
-  [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/deed.zh) 许可。
-  `perf_zh_512k.jsonl` / `perf_zh_1m.jsonl` 是该文本的衍生作品（切块、过滤、重排拼接），
-  **同样以 CC BY-SA 4.0 提供**，署名：Wikipedia contributors, CC BY-SA 4.0。
-- **处理流程**：
-  1. `scripts/fetch_wiki_pool.py`：流式读取条目 → 按句切成 600~1500 字符块 →
-     块级去重 → 丢弃命中敏感词表的块（词表与清洗同一份，含词内空白容忍）→ 写出语料池；
-  2. `scripts/build_long_bucket.py`：按 tokenizer（`zai-org/GLM-4.6`）实测 token 数增量拼接，
-     累积到目标（512,000 / 1,000,000 token），末尾追加通用提问，输出 `messages` 结构；
-  3. `scripts/audit_dataset.py` 复核（L1 原样 / L2 去空白 / L3 去标点三级）。
-- **复现**：
+入库前已复查，真实 PII 残留为 0。
 
-  ```bash
-  python3 scripts/fetch_wiki_pool.py --pool-chars 400000000
-  python3 scripts/build_long_bucket.py --pool-file .cache/wiki_zh_pool.jsonl \
-      --buckets 512k 1m --count 200 100
-  ```
+## 三、数据集构造（`scripts/build_hot_dataset.py`）
 
-- **说明**：拼接后不再保留条目边界，dump 的具体版本变更会影响可复现性；
-  语料池缓存 `.cache/` 不入库，可随时按上述命令重建。
+压测需要模拟「服务端已有前缀缓存」的场景，而原数据集每条内容互不相同、命中率恒为 0。
+因此按以下结构重建，**总长度仍落在原档位区间内**：
 
-## 三、使用注意
+```
+一条请求 = [system] + 公共前缀(h×L) + 唯一尾部((1-h)×L) + 问题
+```
 
-- 两档超长数据集为压测用途，内容来自百科条目拼接，语义上不构成连贯文档，
-  不适合作为效果评测数据。
-- 数据集文件以 Git LFS 管理（见仓库根 `.gitattributes`），clone 后需
-  `git lfs install && git lfs pull`。
+- 每档 4 个不同公共前缀，轮流复用（模拟多会话共存，避免单份 KV 占用偏乐观）
+- 尾部按 128 token 切块并做**跨源全局去重**，逐条不重叠，避免命中率虚高
+- 前缀池与尾部池分离，防止前缀随机取到的块与尾部游标撞块
+- `system` 与公共前缀都对齐到 128 token 整数倍（与厂商缓存块粒度一致）
+
+| 档位 | 条数 | 前缀分组 | 目标命中率 | 实际长度 |
+|---|---|---|---|---|
+| 1k   | 200 | 4×50 | 33.3% | 1022~1025 |
+| 9k   | 200 | 4×50 | 67.2% | 9214~9217 |
+| 16k  | 200 | 4×50 | 67.2% | 16382~16385 |
+| 32k  | 200 | 4×50 | 89.5% | 33321~33336 |
+| 64k  | 200 | 4×50 | 89.5% | 66592~66612 |
+| 128k | 200 | 4×50 | 89.5% | 133136~133163 |
+| 200k | 150 | 4×37 | 96.0% | 206084~206109 |
+| 512k | 100 | 4×25 | 96.8% | 514386~514537 |
+| 1m   | 100 | —     | 0%（旧冷启动数据，未重建，默认不参与 bench-all） |
+
+## 四、复现
+
+```bash
+python3 scripts/build_hot_dataset.py \
+    --buckets 1k 9k 16k 32k 64k 128k 200k 512k \
+    --count 200 200 200 200 200 200 150 100 \
+    --prefixes 4 \
+    --pool-jsonl <语料池 JSONL 路径> \
+    --out-dir datasets_hot
+```
+
+## 五、使用注意
+
+- 数据集以 Git LFS 管理（见仓库根 `.gitattributes`），clone 后需 `git lfs pull`
+- 部分网关响应不返回 `usage` 明细，evalscope 原生 `KV Cache Hit Rate` 会恒为 0
+  （测不到而非未命中）。跑完用 `scripts/patch_cache_metrics.py` 重算，
+  `run.sh` 已把它接在报告生成之前，报告直接显示真实值
+- 实测命中率与设计值存在偏差：长档位（≥32k）在 ±7pp 内，小档位因缓存块粒度更细而偏高

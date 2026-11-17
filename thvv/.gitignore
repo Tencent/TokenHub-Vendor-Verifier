@@ -20,3 +20,7 @@ tmp*.json
 # OS files
 .DS_Store
 Thumbs.db
+
+# 配置备份（含密钥，禁止入库）
+configs/.env.bak*
+configs/.env.*.bak

@@ -16,8 +16,10 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import math
+import pickle
 import os
 import re
 import sqlite3
@@ -59,10 +61,28 @@ def load_rows(db: str) -> List[dict]:
         cur = conn.cursor()
         cur.execute("SELECT * FROM result")
         rows = [dict(r) for r in cur.fetchall()]
+        # 附带 summary 的命中率（由 patch_cache_metrics.py 回写；evalscope 原生恒为 0）
+        try:
+            _sj = os.path.join(os.path.dirname(db), "benchmark_summary.json")
+            with open(_sj, encoding="utf-8") as _f:
+                _hp = json.load(_f).get("KV Cache Hit Rate (%)")
+            for _r in rows:
+                _r["_cache_hit_pct"] = _hp
+        except Exception:
+            pass
         conn.close()
         return rows
     except sqlite3.Error:
         return []
+
+
+def bucket_tokens(bucket: str) -> int:
+    """档位标签 -> 大致 token 数，用于按输入长度排序（1k < 9k < 16k < ... < 1m）。"""
+    m = re.fullmatch(r"(\d+)([km])", bucket or "")
+    if not m:
+        return 1 << 60
+    n = int(m.group(1))
+    return n * (1024 if m.group(2) == "k" else 1024 * 1024)
 
 
 def _mean(vals: List[float]) -> Optional[float]:
@@ -170,6 +190,8 @@ def compute_stats(rows: List[dict]) -> dict:
         "prompt_tokens_mean": _mean(prompt_tok),
         "completion_tokens_mean": _mean(compl_tok),
         "total_tokens": int(total_in + total_out),
+        "cached_tokens_mean": ((_mean(prompt_tok) or 0) * _hp / 100) if (_hp := next((r.get("_cache_hit_pct") for r in ok_rows if r.get("_cache_hit_pct") is not None), None)) is not None else None,
+        "cache_hit_ratio": (_hp / 100) if (_hp := next((r.get("_cache_hit_pct") for r in ok_rows if r.get("_cache_hit_pct") is not None), None)) is not None else None,
         # 吞吐（墙钟口径）与总时延
         "avg_total_ms": (lat_mean * 1000) if lat_mean is not None else None,
         "output_tps": output_tps,
@@ -363,7 +385,7 @@ white-space:pre-wrap;word-break:break-word;max-height:240px;overflow:auto}}
 
     # ── 二、并发梯度矩阵（每个 bucket 一张表；指标与 xlsx 性能指标 sheet 完全同口径）──
     P.append("<h2>二、并发梯度对比</h2>")
-    for bucket in sorted(groups):
+    for bucket in sorted(groups, key=bucket_tokens):
         stats = sorted(groups[bucket], key=lambda s: s["parallel"])
         P.append(f"<h3>档位 {bucket}</h3>")
         P.append('<div class="table-wrap"><table><thead><tr>'
@@ -394,7 +416,8 @@ white-space:pre-wrap;word-break:break-word;max-height:240px;overflow:auto}}
                 _fmt(s["itl_p95"], 3), _fmt(s["itl_p99"], 3),
                 _fmt(s["prompt_tokens_mean"], 1), _fmt(s["completion_tokens_mean"], 1),
                 f"{s['total_tokens']:,}",
-                "-", "-",  # Avg Cached Tokens / Avg Cache Hit Ratio：数据源未提供
+                _fmt(s["cached_tokens_mean"], 1),
+                (f"{s['cache_hit_ratio']:.1%}" if s["cache_hit_ratio"] is not None else "-"),
                 _fmt(s["avg_total_ms"]),
                 _fmt(s["output_tpm"]), _fmt(s["output_tps"]),
                 _fmt(s["input_tpm"]), _fmt(s["tpm"]),

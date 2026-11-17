@@ -179,8 +179,24 @@ def _compute_token_trends(records: list, window_sec: float = 60.0) -> dict:
     return {"input": input_trends, "output": output_trends, "total": total_trends, "qpm": qpm_trends}
 
 
+def _cache_metrics(db_path):
+    """读同目录 benchmark_summary.json 的命中率（由 patch_cache_metrics.py 回写）。
+
+    evalscope 原生 KV 命中率恒为 0，这里以回写值为准，没有则回落 0。
+    """
+    sj = Path(db_path).parent / "benchmark_summary.json"
+    try:
+        d = json.load(open(sj, encoding="utf-8"))
+        hit = float(d.get("KV Cache Hit Rate (%)") or 0) / 100.0
+        avg_in = float(d.get("Avg Input Tokens") or 0)
+        return avg_in * hit, hit
+    except Exception:
+        return 0, 0
+
+
 def calc_stats(db_path, label, parallel, tpm_window_sec=60.0):
     """从 benchmark_data.db 计算性能指标 + TPM/QPM 趋势。"""
+    _cached_avg, _hit_ratio = _cache_metrics(db_path)
     conn = sqlite3.connect(str(db_path))
     cur = conn.cursor()
     cur.execute("PRAGMA table_info(result)")
@@ -280,8 +296,8 @@ def calc_stats(db_path, label, parallel, tpm_window_sec=60.0):
         "Avg Prompt Tokens": safe_avg(prompt_tokens),
         "Avg Completion Tokens": safe_avg(completion_tokens),
         "Total Tokens": total_tokens_sum,
-        "Avg Cached Tokens": 0,
-        "Avg Cache Hit Ratio": 0,
+        "Avg Cached Tokens": _cached_avg,
+        "Avg Cache Hit Ratio": _hit_ratio,
         "Avg Total Time(ms)": (safe_avg(ttlts) or 0) * 1000,
         "Output TPM": output_tpm,
         "Output TPS": output_tps,
@@ -419,6 +435,15 @@ def write_failure_sheet(wb, items):
     ws.freeze_panes = "A2"
 
 
+def bucket_tokens(bucket: str) -> int:
+    """档位标签 -> 大致 token 数，用于按输入长度排序（1k < 9k < 16k < ... < 1m）。"""
+    m = re.fullmatch(r"(\d+)([km])", bucket or "")
+    if not m:
+        return 1 << 60
+    n = int(m.group(1))
+    return n * (1024 if m.group(2) == "k" else 1024 * 1024)
+
+
 def find_run_dirs(results_root: Path):
     """扫描 results/ 下含 benchmark_data.db 的子目录，返回 (run_dir, db_path, vendor, bucket, parallel)"""
     runs = []
@@ -438,7 +463,9 @@ def find_run_dirs(results_root: Path):
             runs.append((run_tag, db, vendor, bucket, parallel))
         except Exception:
             continue
-    runs.sort(key=lambda r: r[0])
+    # 按输入长度（档位）从小到大排，同档位内按并发升序：
+    # 直接按 run_tag 字符串排会得到 128k < 16k < 1k < 200k 的字母序，读表时看不出长度趋势
+    runs.sort(key=lambda r: (bucket_tokens(r[3]), r[4], r[0]))
     return runs
 
 
@@ -572,7 +599,7 @@ def write_tpm_html(xlsx_path, rows):
         ("output", "Output TPM"),
         ("qpm", "QPM"),
     ]
-    for label, group in sorted(groups.items()):
+    for label, group in sorted(groups.items(), key=lambda kv: bucket_tokens(kv[0])):
         parallels = sorted(set(r.get("_parallel", 0) for r in group))
         trends_by_metric = {key: {} for key, _ in metric_defs}
         all_times = set()

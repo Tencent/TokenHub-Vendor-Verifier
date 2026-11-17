@@ -13,7 +13,9 @@
 # P        = 并发数，默认 10
 #
 # bench-all 环境变量：
-#   BUCKETS             档位列表，默认 "1k 9k 16k 32k 64k 128k 200k 512k 1m"
+#   BUCKETS             档位列表，默认 "1k 9k 16k 32k 64k 128k 200k 512k"
+#                       （1m 档暂停默认压测，数据集保留；需要时用 BUCKETS 显式带上，
+#                         或直接 bash run.sh bench 1m）
 #   CONCURRENCY_LADDER  并发梯度，默认 "1 8 32 64 128"。显式设置后不再追加档位专用并发。
 #                       未设置时 200k 会自动补一个 16 并发点（bucket_extra_parallels）。
 #   TPM_BUDGET          TPM 预算（tokens/min），默认 0 = 不限制。按「单条 token × 并发」裁剪并发阶梯，
@@ -357,6 +359,7 @@ cmd_bench() {
         --tokenizer-path "$tok" \
         --url "$API_URL" --api-key "$API_KEY" \
         --temperature "$TEMPERATURE" \
+        --headers Accept-Encoding=identity \
         --parallel "$p" --number "$n" \
         --dataset custom_multi_turn \
         --dataset-path "$ds" \
@@ -372,6 +375,14 @@ cmd_bench() {
     # 报告出口（跑完才会到这里；Ctrl+C 中断会直接终止脚本，不生成报告）：
     #   性能测试报告.html = 阅读版：总体结论 + 并发梯度矩阵 + 失败原因聚合 + 失败请求逐条明细
     #   性能测试报告.xlsx = 指标交付版：「性能指标」45 列聚合指标 + 「失败请求详情」sheet（14 列）
+    # 先重算命中率并写回 summary，报告才能显示真实值（evalscope 流式 usage 解析有缺陷，
+    # DeepSeek 把 usage 挂在有 choices 的 chunk 上，原生 KV Cache Hit Rate 恒为 0）
+    echo "[report] 重算缓存命中率并写回指标 ..."
+    python3 scripts/patch_cache_metrics.py --results-dir results \
+        --filter "perf-${bucket}-${ts}" \
+        --write-back \
+        --out "$out/缓存命中率.csv" \
+        2>&1 | tail -5 || echo "[warn] 命中率重算失败，可手动运行: python3 scripts/patch_cache_metrics.py --write-back"
     echo "[report] 生成性能测试报告 ..."
     python3 scripts/gen_perf_dashboard.py \
         --run-dir "$out" \
@@ -433,7 +444,8 @@ cmd_bench_all() {
     auto_detect_tokenizer
     ensure_tokenizer_cached
 
-    local buckets="${BUCKETS:-1k 9k 16k 32k 64k 128k 200k 512k 1m}"
+    # 1m 档暂停默认压测（数据集保留），显式 BUCKETS=...1m 或 bench 1m 仍可运行
+    local buckets="${BUCKETS:-1k 9k 16k 32k 64k 128k 200k 512k}"
     # 显式设置 CONCURRENCY_LADDER 时以用户梯度为准，不再追加档位专用并发。
     local ladder_user="${CONCURRENCY_LADDER:-}"
     local conc_ladder="${ladder_user:-1 8 32 64 128}"
@@ -484,7 +496,7 @@ cmd_bench_all() {
         local once_tokens=$(bucket_tokens "$label")
         local max_par
         if ! max_par=$(bucket_max_parallel "$label"); then
-            tlog "❌ [$label] 未知档位，可用档位: 1k 9k 16k 32k 64k 128k 200k 512k 1m，跳过"
+            tlog "❌ [$label] 未知档位，可用档位: 1k 9k 16k 32k 64k 128k 200k 512k 1m（1m 不在默认 bench-all 内，需 BUCKETS 显式指定），跳过"
             continue
         fi
         local tpm_par=999999
@@ -547,6 +559,7 @@ cmd_bench_all() {
         --tokenizer-path "$tok" \
         --url "$API_URL" --api-key "$API_KEY" \
         --temperature "$TEMPERATURE" \
+        --headers Accept-Encoding=identity \
         --parallel "$p" --number "$n" \
         --dataset custom_multi_turn \
         --dataset-path "$ds" \
@@ -617,6 +630,12 @@ cmd_bench_all() {
     # 报告出口：跨档位汇总性能测试报告.html（阅读版）+ 性能测试报告.xlsx（指标交付版）
     # （--run-dir 指向组目录；gen_perf_dashboard 的 os.walk 已开启 followlinks，
     #   组目录内的 run 软链可正常扫描，且不会混入 results/ 下其他历史 run）
+    tlog "[report] 重算缓存命中率并写回指标（evalscope 原生恒为 0）..."
+    python3 scripts/patch_cache_metrics.py --results-dir results \
+        ${xlsx_filter[@]+"${xlsx_filter[@]}"} \
+        --write-back \
+        --out "$group_dir/缓存命中率.csv" \
+        2>&1 | tee -a "$group_log" || tlog "[warn] 命中率重算失败，可手动运行: python3 scripts/patch_cache_metrics.py --write-back"
     tlog "[report] 生成性能测试报告 ..."
     python3 scripts/gen_perf_dashboard.py \
         --run-dir "$group_dir" \
@@ -637,6 +656,7 @@ cmd_bench_all() {
         --no-tpm-html \
         --out "$group_dir/性能测试报告.xlsx" \
         2>&1 | tee -a "$group_log" || tlog "[warn] Excel 报告生成失败，可手动运行: bash run.sh report"
+
 
     tlog ""
     if [[ -f "$group_dir/性能测试报告.html" ]]; then

@@ -173,11 +173,18 @@ cmd_check() {
     
     echo ""
     echo -e "${BLUE}--- 数据集检查 ---${NC}"
-    if [[ -d perf/datasets ]]; then
-        local count=$(ls perf/datasets/*.jsonl 2>/dev/null | wc -l)
-        echo -e "  perf/datasets: ${GREEN}${count} 个数据集${NC}"
+    # 与 perf/run.sh 的优先级一致：datasets_clean（带缓存命中）优先，其次 datasets
+    local _ds_dir=""
+    if [[ -d perf/datasets_clean ]]; then
+        _ds_dir="perf/datasets_clean"
+    elif [[ -d perf/datasets ]]; then
+        _ds_dir="perf/datasets"
+    fi
+    if [[ -n "$_ds_dir" ]]; then
+        local count=$(ls "$_ds_dir"/*.jsonl 2>/dev/null | wc -l)
+        echo -e "  ${_ds_dir}: ${GREEN}${count} 个数据集${NC}"
     else
-        echo -e "  perf/datasets: ${YELLOW}不存在（性能压测需要）${NC}"
+        echo -e "  perf/datasets_clean: ${YELLOW}不存在（性能压测需要）${NC}"
     fi
 }
 
