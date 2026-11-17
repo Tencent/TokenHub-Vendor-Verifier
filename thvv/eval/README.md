@@ -28,7 +28,7 @@
 |--------|------|:---:|:---:|:---:|
 | `aime25` | AIME25 数学竞赛题 | 16 (pass@16) | ❌ | ❌ |
 | ~~`aime26`~~ | ~~AIME 2026 数学竞赛题~~ **已废弃，数学类改用 `arxivmath`** | 16 | ❌ | ❌ |
-| `arxivmath` | ArXiv-Math 研究级数学题（103 题，4 个子集） | 16 | ❌ | ❌ |
+| `arxivmath` | ArXiv-Math 研究级数学题（103 题，4 个子集） | 1 | ❌ | ❌ |
 | `gpqa_diamond` | GPQA-Diamond 研究生级问答 | 3 | ❌ | ❌ |
 | `hle` | Humanity's Last Exam 综合评测 | 1 | ✅ | ❌ |
 | `tau2_bench` | tau2-bench Agent 对话评测 | 5 | ❌ | ❌ |

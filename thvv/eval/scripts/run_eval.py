@@ -98,7 +98,7 @@ SUPPORTED_DATASETS = {
     },
     'arxivmath': {
         'label': 'arxivmath',
-        'default_repeats': 16,
+        'default_repeats': 1,
         'default_eval_batch_size': 30,
         'judge_strategy': 'auto',
         'requires_judge_model': False,
