@@ -187,6 +187,7 @@ def compute_stats(rows: List[dict]) -> dict:
         "latency_p99": _pct(lat_s, 99),
         # Rate（生成速率）与 ITL（token 间隔）
         "rate_mean": _mean(rates),
+        "rate_p5": _pct(rates_s, 5),
         "rate_p50": _pct(rates_s, 50),
         "rate_p90": _pct(rates_s, 90),
         "rate_p95": _pct(rates_s, 95),
@@ -442,14 +443,15 @@ white-space:pre-wrap;word-break:break-word;max-height:240px;overflow:auto}}
             _th = get_tier_thresholds(_tier)
             P.append(
                 f'<div class="sla-hint">验收阈值（{_tier}）：P90 TTFT ≤ {_th["p90"]:g}s ｜ '
-                f'Avg TTFT ≤ {_th["p50"]:g}s ｜ Avg Rate &gt; {RATE_MIN_TOKENS_PER_SEC:g} t/s ｜ '
+                f'Avg TTFT ≤ {_th["p50"]:g}s ｜ '
+                f'Avg Rate &gt; {RATE_MIN_TOKENS_PER_SEC:g} t/s ｜ '
                 f'成功率 100%（不达标行标红，超标单元格加粗）</div>')
         P.append('<div class="table-wrap"><table><thead><tr>'
                  '<th>并发</th><th>总请求</th><th>成功</th><th>失败</th><th>成功率</th>'
                  '<th>Avg TTFT(s)</th><th>Min TTFT(s)</th><th>Max TTFT(s)</th>'
                  '<th>P50 TTFT(s)</th><th>P90 TTFT(s)</th><th>P95 TTFT(s)</th><th>P99 TTFT(s)</th>'
                  '<th>Avg TTLT(s)</th><th>P50 TTLT(s)</th><th>P90 TTLT(s)</th><th>P95 TTLT(s)</th><th>P99 TTLT(s)</th>'
-                 '<th>Avg Rate(t/s)</th><th>P50 Rate(t/s)</th><th>P90 Rate(t/s)</th><th>P95 Rate(t/s)</th><th>P99 Rate(t/s)</th>'
+                 '<th>Avg Rate(t/s)</th><th>P5 Rate(t/s)</th><th>P50 Rate(t/s)</th><th>P90 Rate(t/s)</th><th>P95 Rate(t/s)</th><th>P99 Rate(t/s)</th>'
                  '<th>Avg ITL(s)</th><th>P50 ITL(s)</th><th>P90 ITL(s)</th><th>P95 ITL(s)</th><th>P99 ITL(s)</th>'
                  '<th>Avg Prompt Tokens</th><th>Avg Completion Tokens</th><th>Total Tokens</th>'
                  '<th>Avg Cached Tokens</th><th>Avg Cache Hit Ratio</th><th>Avg Total Time(ms)</th>'
@@ -467,8 +469,8 @@ white-space:pre-wrap;word-break:break-word;max-height:240px;overflow:auto}}
                 _fmt(s["ttft_p50"], 3), _fmt(s["ttft_p90"], 3), _fmt(s["ttft_p95"], 3), _fmt(s["ttft_p99"], 3),
                 _fmt(s["latency_mean"], 3), _fmt(s["latency_p50"], 3), _fmt(s["latency_p90"], 3),
                 _fmt(s["latency_p95"], 3), _fmt(s["latency_p99"], 3),
-                _fmt(s["rate_mean"], 3), _fmt(s["rate_p50"], 3), _fmt(s["rate_p90"], 3),
-                _fmt(s["rate_p95"], 3), _fmt(s["rate_p99"], 3),
+                _fmt(s["rate_mean"], 3), _fmt(s["rate_p5"], 3), _fmt(s["rate_p50"], 3),
+                _fmt(s["rate_p90"], 3), _fmt(s["rate_p95"], 3), _fmt(s["rate_p99"], 3),
                 _fmt(s["itl_mean"], 3), _fmt(s["itl_p50"], 3), _fmt(s["itl_p90"], 3),
                 _fmt(s["itl_p95"], 3), _fmt(s["itl_p99"], 3),
                 _fmt(s["prompt_tokens_mean"], 1), _fmt(s["completion_tokens_mean"], 1),

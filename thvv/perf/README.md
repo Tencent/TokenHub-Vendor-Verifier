@@ -194,7 +194,7 @@ python3 scripts/gen_report_from_db.py --results-dir results --client "供应商�
 一、总体结论      总请求数 / 成功 / 失败 / 总成功率 + 处置建议
 二、并发梯度对比  按档位分表，指标与 xlsx 性能指标 sheet 完全同口径：
                   总请求 / 成功 / 失败 / 成功率，TTFT（Avg/Min/Max/P50/P90/P95/P99）、
-                  TTLT 与 Rate 与 ITL（Avg/P50/P90/P95/P99）、Tokens 三项、
+                  TTLT 与 Rate（Avg/P5/P50/P90/P95/P99）与 ITL（Avg/P50/P90/P95/P99）、Tokens 三项、
                   Avg Total Time(ms)、Output TPM / Output TPS / Input TPM / TPM
 三、失败分析      失败原因聚合统计（限流 / 超时 / 服务端错误 ...）+ 占比
 四、失败请求明细  逐条罗列所有失败请求：HTTP 状态码 / 请求 Body / 响应 Body /
@@ -207,12 +207,12 @@ python3 scripts/gen_report_from_db.py --results-dir results --client "供应商�
 性能指标 sheet：客户端 / 数据集 / 并发数 / 总请求数 / 成功数 / 失败数 / 成功率
   TTFT：Avg / Min / Max / P50 / P90 / P95 / P99（首 token 时延，秒）
   TTLT：Avg / P50 / P90 / P95 / P99（总时延，秒）
-  Rate：Avg / P50 / P90 / P95 / P99（生成速率，tokens/s）
+  Rate：Avg / P5 / P50 / P90 / P95 / P99（生成速率，tokens/s）
   ITL：Avg / P50 / P90 / P95 / P99（token 间隔，秒）
   Token：Avg Prompt / Avg Completion / Total Tokens
   吞吐：Output TPM / Output TPS / Input TPM / TPM
   SLA判定 / SLA未达标项：逐行验收结论（见下）
-SLA判定标准 sheet：各档位 TTFT P50/P90 阈值 + 吞吐下限，便于对照
+SLA判定标准 sheet：各档位 TTFT P50/P90 阈值 + Avg Rate 下限，便于对照
 ```
 
 ### SLA 不达标标红
@@ -224,7 +224,7 @@ SLA判定标准 sheet：各档位 TTFT P50/P90 阈值 + 吞吐下限，便于对
 | 请求成功率 | 必须 100% |
 | Avg TTFT | ≤ 档位 P50 阈值（<4K:2s / <8K:2.5s / <32K:4s / <64K:8s / <128K:15s / <256K:30s） |
 | P90 TTFT | ≤ 档位 P90 阈值（5s / 5s / 8s / 15s / 35s / 70s） |
-| Avg Rate(t/s) | > 30 t/s（OTPS 下限） |
+| Avg Rate(t/s) | > 30 t/s（OTPS 下限）。P5 Rate 只展示，不参与标红 |
 
 - xlsx：不达标行整行淡红，超标单元格深红加粗，`SLA未达标项` 列给出具体数值与阈值；
 - html：不达标行 `row-bad` 淡红，超标单元格 `cell-bad` 深红，每张表上方标出该档位阈值，总体结论多一张「SLA 不达标」卡片并列出明细。

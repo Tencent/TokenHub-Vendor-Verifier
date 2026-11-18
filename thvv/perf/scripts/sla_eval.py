@@ -399,6 +399,8 @@ def evaluate_report_row(
       - P90 TTFT ≤ 档位 P90 阈值
       - Avg Rate(t/s) > RATE_MIN_TOKENS_PER_SEC（即 OTPS 下限 30 t/s）
 
+    P5 Rate 只出现在报告列里，不参与达标判定。
+
     返回：
       {"tier", "pass", "violations": [...], "failed_fields": set(...), "thresholds"}
     """
@@ -437,7 +439,7 @@ def evaluate_report_row(
                 f"P90 TTFT {p90_ttft:.2f}s > 阈值 {th['p90']}s（档位 {tier}）")
             failed_fields.add(FIELD_P90_TTFT)
 
-    # OTPS 下限：越小越差
+    # OTPS 下限：越小越差。只卡 Avg Rate；P5 Rate 仅展示，不标红。
     if avg_rate is not None and avg_rate <= RATE_MIN_TOKENS_PER_SEC:
         violations.append(
             f"Avg Rate {avg_rate:.2f} t/s ≤ 下限 {RATE_MIN_TOKENS_PER_SEC:g} t/s")

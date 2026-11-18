@@ -8,7 +8,7 @@ Usage:
 输出：results/性能测试报告_<时间戳>.xlsx
 
 Sheets:
-  - 性能指标       45 列聚合指标（每行一个 run；含 TTFT/TTLT/Rate/ITL/TPOT 五组时延指标）
+  - 性能指标       46 列聚合指标（每行一个 run；含 TTFT/TTLT/Rate/ITL/TPOT 五组时延指标）
   - 失败请求详情   逐条罗列所有失败请求（14 列，与平台版报告对齐；无失败时仅表头）
 
 「失败请求详情」直接遍历 results/ 下全部 benchmark_data.db，包含被「性能指标」
@@ -283,6 +283,7 @@ def calc_stats(db_path, label, parallel, tpm_window_sec=60.0):
         "P95 TTLT(s)": percentile(ttlts, 95),
         "P99 TTLT(s)": percentile(ttlts, 99),
         "Avg Rate(t/s)": safe_avg(rates),
+        "P5 Rate(t/s)": percentile(rates, 5),
         "P50 Rate(t/s)": percentile(rates, 50),
         "P90 Rate(t/s)": percentile(rates, 90),
         "P95 Rate(t/s)": percentile(rates, 95),
@@ -326,7 +327,7 @@ HEADERS = [
     "Avg TTFT(s)", "Min TTFT(s)", "Max TTFT(s)",
     "P50 TTFT(s)", "P90 TTFT(s)", "P95 TTFT(s)", "P99 TTFT(s)",
     "Avg TTLT(s)", "P50 TTLT(s)", "P90 TTLT(s)", "P95 TTLT(s)", "P99 TTLT(s)",
-    "Avg Rate(t/s)", "P50 Rate(t/s)", "P90 Rate(t/s)", "P95 Rate(t/s)", "P99 Rate(t/s)",
+    "Avg Rate(t/s)", "P5 Rate(t/s)", "P50 Rate(t/s)", "P90 Rate(t/s)", "P95 Rate(t/s)", "P99 Rate(t/s)",
     "Avg ITL(s)", "P50 ITL(s)", "P90 ITL(s)", "P95 ITL(s)", "P99 ITL(s)",
     "Avg TPOT(s)", "P50 TPOT(s)", "P90 TPOT(s)", "P95 TPOT(s)", "P99 TPOT(s)",
     "Avg Prompt Tokens", "Avg Completion Tokens", "Total Tokens",
@@ -457,14 +458,15 @@ def write_sla_sheet(wb):
     header_fill = PatternFill("solid", fgColor="4472C4")
     header_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
     heads = ["输入 tokens 档位", "下界(含)", "上界(不含)",
-             "Avg TTFT 阈值(s)", "P90 TTFT 阈值(s)", "吞吐下限(t/s)"]
+             "Avg TTFT 阈值(s)", "P90 TTFT 阈值(s)", "Avg Rate 下限(t/s)"]
     for c, h in enumerate(heads, start=1):
         cell = ws.cell(row=1, column=c, value=h)
         cell.font, cell.fill, cell.alignment = header_font, header_fill, header_align
 
     r = 2
     for item in threshold_rows():
-        vals = [item["tier"], item["lo"], item["hi"], item["p50"], item["p90"], item["rate_min"]]
+        vals = [item["tier"], item["lo"], item["hi"], item["p50"], item["p90"],
+                item["rate_min"]]
         for c, v in enumerate(vals, start=1):
             cell = ws.cell(row=r, column=c, value=v)
             if c >= 4:
@@ -481,7 +483,7 @@ def write_sla_sheet(wb):
         ws.cell(row=r, column=2, value=value)
         r += 1
 
-    for c, w in enumerate([18, 12, 12, 20, 20, 18], start=1):
+    for c, w in enumerate([18, 12, 12, 20, 20, 20], start=1):
         ws.column_dimensions[ws.cell(row=1, column=c).column_letter].width = w
     ws.freeze_panes = "A2"
 
@@ -521,7 +523,7 @@ def find_run_dirs(results_root: Path):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="从 benchmark_data.db 直接生成 45 列性能报告")
+    ap = argparse.ArgumentParser(description="从 benchmark_data.db 直接生成 46 列性能报告")
     ap.add_argument("--results-dir", default="results", help="results 目录（默认 ./results）")
     ap.add_argument("--client", default="", help="客户端位置（如：美国硅谷 / 国内广州）")
     ap.add_argument("--network", default="", help="后端网络链接说明")
@@ -606,7 +608,7 @@ def main():
                     cell.font = _BAD_CELL_FONT
                     cell.alignment = Alignment(vertical="top", wrap_text=True)
                 continue
-            if h.startswith(("Avg ", "Min ", "Max ", "P50 ", "P90 ", "P95 ", "P99 ")):
+            if h.startswith(("Avg ", "Min ", "Max ", "P5 ", "P50 ", "P90 ", "P95 ", "P99 ")):
                 if "(s)" in h or "(t/s)" in h:
                     cell.number_format = "0.000"
                 elif "(ms)" in h:
