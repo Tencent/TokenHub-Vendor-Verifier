@@ -27,6 +27,10 @@
 #   SUCCESS_RATE_MIN    成功率早停阈值（百分比，默认 0=关闭）；
 #                       某档并发跑完后成功率低于此值时，跳过该 bucket 剩余更高并发，
 #                       直接切到下一个 bucket。设为 0 可关闭早停。
+#   WARMUP_NUM          每次测量前的预热条数（默认 4，不计入结果统计）。
+#                       每档数据集是 4 组公共前缀轮转取样本，4 条正好各预热一组，
+#                       消除 1 并发档位被冷启动摊薄的问题（输入越长影响越大）；
+#                       设 0 关闭，需要测冷启动成本时用。
 #   DATASET_TOKENIZER   超长档位（512k/1m）计数/过滤用的分词器，默认 zai-org/GLM-4.6
 #                       （与数据集构建一致）。仅影响 512k/1m，其它档位仍按 TOKENIZER/MODEL_NAME。
 #                       未设置时若显式设置了 TOKENIZER，则这两档沿用该 TOKENIZER。
@@ -129,6 +133,18 @@ if [[ -z "${TEMPERATURE:-}" ]]; then
     esac
 fi
 echo "[info] MODEL_NAME=$MODEL_NAME → temperature=$TEMPERATURE" >&2
+
+# 预热条数：每次测量前先发 N 条「不计入统计」的请求，把服务端 prefix cache 建好。
+# 为什么需要：每档数据集是 system + 4 组公共前缀 + 唯一尾部（见 datasets_clean/META.json），
+# evalscope 按行轮转取样本，前 4 条正好各命中一个前缀组、全是「首访」→ 冷启动。
+# 1 并发档位只跑 20 条，这 4 条冷请求的 prefill 成本会直接摊进平均值并随输入变长放大
+# （512k 实测：剔除后 outTPS 130.6→140.7，正好等于 8 并发的单流 140.5）。
+# 默认 4 = 前缀组数，正好把 4 组各预热一次；设 0 关闭（需要观察冷启动成本时用）。
+WARMUP_NUM="${WARMUP_NUM:-4}"
+if [[ ! "$WARMUP_NUM" =~ ^[0-9]+$ ]]; then
+    echo "[fail] WARMUP_NUM 必须是非负整数（预热条数），当前: $WARMUP_NUM" >&2
+    exit 1
+fi
 
 # 保存用户在 .env 中显式设置的 TOKENIZER（如果没设则为空）
 _TOKENIZER_USER="${TOKENIZER:-}"
@@ -348,7 +364,7 @@ cmd_bench() {
     local out="results/perf-${bucket}-${ts}"
     mkdir -p "$out"
 
-    echo "[bench] model=$MODEL_NAME bucket=$bucket parallel=$p number=$n"
+    echo "[bench] model=$MODEL_NAME bucket=$bucket parallel=$p number=$n warmup=$WARMUP_NUM"
     echo "        url=$API_URL"
     echo "        tokenizer=$tok"
     echo "        out=$out"
@@ -365,6 +381,7 @@ cmd_bench() {
         --dataset-path "$ds" \
         --min-prompt-length "$minlen" --max-prompt-length "$maxlen" \
         --max-tokens 4096 --multi-turn --max-turns 1 \
+        --warmup-num "$WARMUP_NUM" \
         --connect-timeout 60 --read-timeout 600 --db-commit-interval 5 \
         --outputs-dir "$out" --no-timestamp --no-test-connection \
         2>&1 | tee "$out/run.log"
@@ -551,7 +568,7 @@ cmd_bench_all() {
             local out="results/perf-${label}-${run_ts}"
             mkdir -p "$out"
 
-            tlog "[bench] model=$MODEL_NAME bucket=$label parallel=$p number=$n"
+            tlog "[bench] model=$MODEL_NAME bucket=$label parallel=$p number=$n warmup=$WARMUP_NUM"
             tlog "        out=$out"
 
             # stdbuf 让 evalscope 输出无缓冲，tee 同时写日志和控制台（QCI 可实时看到进度）
@@ -566,6 +583,7 @@ cmd_bench_all() {
         --dataset-path "$ds" \
         --min-prompt-length "$minlen" --max-prompt-length "$maxlen" \
         --max-tokens 4096 --multi-turn --max-turns 1 \
+        --warmup-num "$WARMUP_NUM" \
         --connect-timeout 60 --read-timeout 600 --db-commit-interval 5 \
         --outputs-dir "$out" --no-timestamp --no-test-connection \
         2>&1 | tee "$out/run.log" &

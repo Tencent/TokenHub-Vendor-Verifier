@@ -151,6 +151,22 @@ TPM_BUDGET=10000000 bash run.sh bench-all           # 额外叠加 TPM 预算（
 > 启动后进程在后台运行，会打印 PID 和日志路径。
 > 使用 `tail -f results/perf-*-*/run.log` 跟踪进度。
 
+#### 预热（`WARMUP_NUM`，默认 4）
+
+每个档位 / 并发阶梯正式测量前，先发 `WARMUP_NUM` 条请求把服务端 prefix cache 建好，
+这 N 条**不进任何统计**（evalscope `--warmup-num`：日志里是独立的 `Warmup[...]` 进度条，
+不落 `benchmark_data.db`，报告与缓存命中率都不含它们）。
+
+为什么默认 4：每档数据集按「4 组公共前缀轮转」排列（见 `datasets_clean/META.json` 的
+`design` 字段），前 4 条正好各是一次前缀组首访，全是冷请求。不预热时这 4 条直接摊进
+平均值，且输入越长摊得越狠——实测 512k / 并发 1（20 条请求）outTPS 130.6，剔除这 4 条
+后 140.7，与并发 8 的单流 140.5 对齐；1k~200k 档影响 ≤2%。
+
+```bash
+WARMUP_NUM=8 bash run.sh bench 512k 60 8   # 多预热一轮（8 条）
+WARMUP_NUM=0 bash run.sh bench 512k 20 1   # 关掉，专门量冷启动成本
+```
+
 ### 6. 报告
 
 `bench` / `bench-all` 跑完会**自动生成**两份报告（HTML 阅读版 + xlsx 指标版），无需手动操作；路径见下方常见问题。
