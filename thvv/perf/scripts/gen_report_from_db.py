@@ -32,6 +32,10 @@ from openpyxl.styles import Alignment, Font, PatternFill
 # 失败明细的提取 / 错误归类与 HTML 报告共用同一套逻辑（同目录脚本）
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from gen_perf_dashboard import _failed_detail, failure_reasons  # noqa: E402
+from sla_eval import (  # noqa: E402
+    FIELD_AVG_RATE, FIELD_AVG_TTFT, FIELD_P90_TTFT, FIELD_SUCCESS,
+    RATE_MIN_TOKENS_PER_SEC, evaluate_report_row, threshold_rows,
+)
 
 
 _VENDOR_CHART_JS = Path(__file__).resolve().parent.parent.parent / "scripts" / "vendor" / "chart.umd.min.js"
@@ -313,6 +317,9 @@ def calc_stats(db_path, label, parallel, tpm_window_sec=60.0):
     }
 
 
+SLA_PASS_HEADER = "SLA判定"
+SLA_DETAIL_HEADER = "SLA未达标项"
+
 HEADERS = [
     "客户端", "后端网路链接",
     "数据集", "并发数", "总请求数", "成功数", "失败数", "成功率",
@@ -326,7 +333,15 @@ HEADERS = [
     "Avg Cached Tokens", "Avg Cache Hit Ratio",
     "Avg Total Time(ms)",
     "Output TPM", "Output TPS", "Input TPM", "TPM",
+    # 验收结论列（追加在末尾，保持既有列顺序不变）
+    SLA_PASS_HEADER, SLA_DETAIL_HEADER,
 ]
+
+# 不达标高亮样式（Excel 标准「差」配色：浅红底 + 深红字）
+_BAD_CELL_FILL = PatternFill("solid", fgColor="FFC7CE")
+_BAD_CELL_FONT = Font(color="9C0006", bold=True)
+_BAD_ROW_FILL = PatternFill("solid", fgColor="FFF2F2")
+_OK_FONT = Font(color="006100", bold=True)
 
 
 FAIL_HEADERS = [
@@ -435,6 +450,42 @@ def write_failure_sheet(wb, items):
     ws.freeze_panes = "A2"
 
 
+def write_sla_sheet(wb):
+    """追加「SLA判定标准」sheet：写明每个档位的验收阈值，便于对照标红结果。"""
+    ws = wb.create_sheet("SLA判定标准")
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill("solid", fgColor="4472C4")
+    header_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    heads = ["输入 tokens 档位", "下界(含)", "上界(不含)",
+             "Avg TTFT 阈值(s)", "P90 TTFT 阈值(s)", "吞吐下限(t/s)"]
+    for c, h in enumerate(heads, start=1):
+        cell = ws.cell(row=1, column=c, value=h)
+        cell.font, cell.fill, cell.alignment = header_font, header_fill, header_align
+
+    r = 2
+    for item in threshold_rows():
+        vals = [item["tier"], item["lo"], item["hi"], item["p50"], item["p90"], item["rate_min"]]
+        for c, v in enumerate(vals, start=1):
+            cell = ws.cell(row=r, column=c, value=v)
+            if c >= 4:
+                cell.number_format = "0.0"
+        r += 1
+
+    # 通用要求（不按档位）
+    for label, value in [
+        ("请求成功率", "必须 100%（任一失败即判定不达标）"),
+        ("判定来源", "thvv/perf/性能验收标准.xlsx（3.1 TTFT / 3.2 OTPS）"),
+        ("说明", "「性能指标」sheet 中不达标行整行淡红，超标单元格深红加粗；SLA未达标项 列给出具体数值与阈值。"),
+    ]:
+        ws.cell(row=r, column=1, value=label).font = Font(bold=True)
+        ws.cell(row=r, column=2, value=value)
+        r += 1
+
+    for c, w in enumerate([18, 12, 12, 20, 20, 18], start=1):
+        ws.column_dimensions[ws.cell(row=1, column=c).column_letter].width = w
+    ws.freeze_panes = "A2"
+
+
 def bucket_tokens(bucket: str) -> int:
     """档位标签 -> 大致 token 数，用于按输入长度排序（1k < 9k < 16k < ... < 1m）。"""
     m = re.fullmatch(r"(\d+)([km])", bucket or "")
@@ -526,10 +577,35 @@ def main():
         cell.fill = header_fill
         cell.alignment = header_align
 
+    pass_count = 0
     for ridx, r in enumerate(rows, start=2):
+        sla = evaluate_report_row(
+            avg_prompt_tokens=r.get("Avg Prompt Tokens"),
+            success_rate_f=r.get("成功率"),
+            avg_ttft_s=r.get("Avg TTFT(s)"),
+            p90_ttft_s=r.get("P90 TTFT(s)"),
+            avg_rate_tps=r.get("Avg Rate(t/s)"),
+        )
+        pass_count += 1 if sla["pass"] else 0
+        detail = "；".join(sla["violations"]) or ""
+
         for c, h in enumerate(HEADERS, start=1):
-            v = r.get(h)
+            if h == SLA_PASS_HEADER:
+                v = "达标" if sla["pass"] else "不达标"
+            elif h == SLA_DETAIL_HEADER:
+                v = detail
+            else:
+                v = r.get(h)
             cell = ws.cell(row=ridx, column=c, value=v)
+            if h == SLA_PASS_HEADER:
+                cell.font = _OK_FONT if sla["pass"] else _BAD_CELL_FONT
+                cell.alignment = Alignment(horizontal="center")
+                continue
+            if h == SLA_DETAIL_HEADER:
+                if not sla["pass"]:
+                    cell.font = _BAD_CELL_FONT
+                    cell.alignment = Alignment(vertical="top", wrap_text=True)
+                continue
             if h.startswith(("Avg ", "Min ", "Max ", "P50 ", "P90 ", "P95 ", "P99 ")):
                 if "(s)" in h or "(t/s)" in h:
                     cell.number_format = "0.000"
@@ -547,7 +623,18 @@ def main():
             elif h in ("总请求数", "成功数", "失败数", "并发数"):
                 cell.number_format = "0"
 
-    widths = {"数据集": 30, "并发数": 8, "总请求数": 10, "成功数": 8, "失败数": 8, "成功率": 9}
+        # 不达标：整行淡红，违规单元格再叠深红（让「哪一项没过」一眼可见）
+        if not sla["pass"]:
+            for c in range(1, len(HEADERS) + 1):
+                ws.cell(row=ridx, column=c).fill = _BAD_ROW_FILL
+            for h in sla["failed_fields"]:
+                if h in HEADERS:
+                    cell = ws.cell(row=ridx, column=HEADERS.index(h) + 1)
+                    cell.fill = _BAD_CELL_FILL
+                    cell.font = _BAD_CELL_FONT
+
+    widths = {"数据集": 30, "并发数": 8, "总请求数": 10, "成功数": 8, "失败数": 8,
+              "成功率": 9, SLA_PASS_HEADER: 10, SLA_DETAIL_HEADER: 46}
     for c, h in enumerate(HEADERS, start=1):
         col_letter = ws.cell(row=1, column=c).column_letter
         ws.column_dimensions[col_letter].width = widths.get(h, 14)
@@ -556,6 +643,7 @@ def main():
     # 失败明细遍历全部 runs（而非 rows）：全失败的 run 不进「性能指标」，但正是最需要排查的
     failures = collect_failures(runs, args.api_url)
     write_failure_sheet(wb, failures)
+    write_sla_sheet(wb)
 
     out_path = Path(args.out) if args.out else (
         root / f"性能测试报告_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
@@ -565,6 +653,8 @@ def main():
     print(f"\n[OK] Saved: {out_path}")
     print(f"     性能指标: {len(rows)} rows x {len(HEADERS)} cols")
     print(f"     失败请求详情: {len(failures)} rows x {len(FAIL_HEADERS)} cols")
+    print(f"     SLA: {pass_count}/{len(rows)} 行达标"
+          + ("" if pass_count == len(rows) else f"，{len(rows) - pass_count} 行已标红"))
 
     # ── TPM/QPM HTML 趋势图 ──
     if not args.no_tpm_html:

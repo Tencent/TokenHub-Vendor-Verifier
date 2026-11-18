@@ -358,6 +358,103 @@ def evaluate_sla_from_evalscope_group(
 
 
 # ---------------------------------------------------------------------------
+# 报告生成器适配层（Excel / HTML 共用；阈值与 evaluate_sla 完全同源）
+# ---------------------------------------------------------------------------
+
+# 违规项对应的报告字段名：Excel 的列名、HTML 表头都用这套 key，便于精确标红
+FIELD_SUCCESS = "成功率"
+FIELD_AVG_TTFT = "Avg TTFT(s)"
+FIELD_P90_TTFT = "P90 TTFT(s)"
+FIELD_AVG_RATE = "Avg Rate(t/s)"
+SLA_FIELDS = (FIELD_SUCCESS, FIELD_AVG_TTFT, FIELD_P90_TTFT, FIELD_AVG_RATE)
+
+
+def threshold_rows() -> List[Dict[str, Any]]:
+    """验收阈值表（供报告「SLA 判定标准」章节直接渲染）。"""
+    return [
+        {
+            "tier": name,
+            "lo": lo,
+            "hi": hi,
+            "p50": th["p50"],
+            "p90": th["p90"],
+            "rate_min": RATE_MIN_TOKENS_PER_SEC,
+        }
+        for name, lo, hi, th in TIERS
+    ]
+
+
+def evaluate_report_row(
+    avg_prompt_tokens: Optional[float],
+    success_rate_f: Optional[float],
+    avg_ttft_s: Optional[float],
+    p90_ttft_s: Optional[float],
+    avg_rate_tps: Optional[float],
+) -> Dict[str, Any]:
+    """单行性能指标的验收判定，给 gen_report_from_db / gen_perf_dashboard 标红用。
+
+    判定口径与 evaluate_sla() 一致：
+      - 成功率必须 100%
+      - Avg TTFT ≤ 档位 P50 阈值
+      - P90 TTFT ≤ 档位 P90 阈值
+      - Avg Rate(t/s) > RATE_MIN_TOKENS_PER_SEC（即 OTPS 下限 30 t/s）
+
+    返回：
+      {"tier", "pass", "violations": [...], "failed_fields": set(...), "thresholds"}
+    """
+    violations: List[str] = []
+    failed_fields: set = set()
+
+    def _num(v):
+        try:
+            return None if v is None else float(v)
+        except (TypeError, ValueError):
+            return None
+
+    rate_f = _num(success_rate_f)
+    avg_ttft = _num(avg_ttft_s)
+    p90_ttft = _num(p90_ttft_s)
+    avg_rate = _num(avg_rate_tps)
+    tier = classify_tier(avg_prompt_tokens)
+
+    # 前置门槛：成功率必须 100%
+    if rate_f is not None and rate_f + 1e-9 < 1.0:
+        violations.append(f"成功率 {rate_f * 100:.2f}% < 100%")
+        failed_fields.add(FIELD_SUCCESS)
+
+    th = get_tier_thresholds(tier)
+    if tier is None:
+        if avg_prompt_tokens is not None:
+            violations.append(
+                f"输入 {float(avg_prompt_tokens):.0f} tokens 未归入任何档位（仅记录，不判定）")
+    else:
+        if avg_ttft is not None and avg_ttft > th["p50"]:
+            violations.append(
+                f"Avg TTFT {avg_ttft:.2f}s > 阈值 {th['p50']}s（档位 {tier}）")
+            failed_fields.add(FIELD_AVG_TTFT)
+        if p90_ttft is not None and p90_ttft > th["p90"]:
+            violations.append(
+                f"P90 TTFT {p90_ttft:.2f}s > 阈值 {th['p90']}s（档位 {tier}）")
+            failed_fields.add(FIELD_P90_TTFT)
+
+    # OTPS 下限：越小越差
+    if avg_rate is not None and avg_rate <= RATE_MIN_TOKENS_PER_SEC:
+        violations.append(
+            f"Avg Rate {avg_rate:.2f} t/s ≤ 下限 {RATE_MIN_TOKENS_PER_SEC:g} t/s")
+        failed_fields.add(FIELD_AVG_RATE)
+
+    # 只有「档位未归入」的提示不算不达标（与 evaluate_sla 一致）
+    hard_fail = bool(failed_fields)
+    return {
+        "tier": tier,
+        "pass": not hard_fail,
+        "violations": violations,
+        "failed_fields": failed_fields,
+        "thresholds": (dict(th) if tier is not None else None),
+    }
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 def _main() -> None:

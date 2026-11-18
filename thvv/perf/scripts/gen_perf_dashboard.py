@@ -23,8 +23,18 @@ import pickle
 import os
 import re
 import sqlite3
+import sys
 from collections import Counter, defaultdict
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+# SLA 判定与 Excel 报告共用同一套阈值（同目录脚本）
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from sla_eval import (  # noqa: E402
+    FIELD_AVG_RATE, FIELD_AVG_TTFT, FIELD_P90_TTFT,
+    RATE_MIN_TOKENS_PER_SEC, classify_tier, evaluate_report_row,
+    get_tier_thresholds,
+)
 
 
 def find_dbs(root: str) -> List[Tuple[str, str, int, int, str]]:
@@ -316,6 +326,19 @@ def render(dbs: List[Tuple[str, str, int, int, str]], title: str,
     overall_fail = sum(s["failed"] for s in all_stats)
     overall_rate = (1 - overall_fail / overall_total) if overall_total else 0.0
 
+    # SLA 判定（与 Excel 报告同口径：成功率 100% + 档位 TTFT 阈值 + 吞吐下限）
+    def _sla_of(st: dict) -> dict:
+        return evaluate_report_row(
+            avg_prompt_tokens=st.get("prompt_tokens_mean"),
+            success_rate_f=st.get("success_rate"),
+            avg_ttft_s=st.get("ttft_mean"),
+            p90_ttft_s=st.get("ttft_p90"),
+            avg_rate_tps=st.get("rate_mean"),
+        )
+
+    sla_map = {id(s): _sla_of(s) for s in all_stats}
+    bad_stats = [s for s in all_stats if not sla_map[id(s)]["pass"]]
+
     P = []
     P.append(f"""<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -348,6 +371,10 @@ tbody td:first-child{{text-align:left;font-weight:600}}
 tbody tr:hover td{{background:#f8fafc}}
 .bad{{color:#dc2626;font-weight:600}}
 .good{{color:#16a34a;font-weight:600}}
+.row-bad td{{background:#fff1f2}}
+tr.row-bad:hover td{{background:#ffe4e6}}
+.cell-bad{{color:#b91c1c;font-weight:700}}
+.sla-hint{{color:#b91c1c;font-size:12px;margin:0 0 6px}}
 .note{{background:#fff;border-left:4px solid #2563eb;border-radius:0 8px 8px 0;
 padding:12px 16px;margin:12px 0 20px}}
 .note ul{{margin:6px 0 0 18px}}
@@ -379,15 +406,44 @@ white-space:pre-wrap;word-break:break-word;max-height:240px;overflow:auto}}
   <div class="card warn"><div class="lbl">失败</div><div class="val">{overall_fail}</div></div>
   <div class="card {'ok' if overall_rate >= 0.95 else 'warn'}"><div class="lbl">总成功率</div>
     <div class="val">{overall_rate:.1%}</div></div>
+  <div class="card {'ok' if not bad_stats else 'warn'}"><div class="lbl">SLA 不达标</div>
+    <div class="val">{len(bad_stats)} / {len(all_stats)}</div></div>
 </div>
 <div class="note">{overall_note(all_stats, overall_rate, overall_fail)}</div>
 """)
+
+    # SLA 不达标明细（与表格标红同源，给结论层一个可直接引用的清单）
+    if bad_stats:
+        from html import escape as _esc
+        shown = bad_stats[:30]
+        items = "".join(
+            f"<li>档位 <strong>{_esc(str(s['bucket']))}</strong> 并发 "
+            f"<strong>{s['parallel']}</strong>"
+            + (f"（{_esc(str(s['vendor']))}）" if s.get("vendor") else "")
+            + "："
+            f"{_esc('；'.join(sla_map[id(s)]['violations']))}</li>"
+            for s in shown
+        )
+        more = (f"<li>另有 {len(bad_stats) - len(shown)} 项未列出，详见上表标红行。</li>"
+                if len(bad_stats) > len(shown) else "")
+        P.append('<div class="note" style="border-left-color:#dc2626">'
+                 f"<b>⚠ SLA 不达标（{len(bad_stats)} 项）</b><ul>{items}{more}</ul></div>")
 
     # ── 二、并发梯度矩阵（每个 bucket 一张表；指标与 xlsx 性能指标 sheet 完全同口径）──
     P.append("<h2>二、并发梯度对比</h2>")
     for bucket in sorted(groups, key=bucket_tokens):
         stats = sorted(groups[bucket], key=lambda s: s["parallel"])
         P.append(f"<h3>档位 {bucket}</h3>")
+        # 该档位的验收阈值提示（按实际平均输入 tokens 归档，与判定口径一致）
+        _prompts = [s["prompt_tokens_mean"] for s in stats
+                    if s.get("prompt_tokens_mean") is not None]
+        _tier = classify_tier(sum(_prompts) / len(_prompts)) if _prompts else None
+        if _tier:
+            _th = get_tier_thresholds(_tier)
+            P.append(
+                f'<div class="sla-hint">验收阈值（{_tier}）：P90 TTFT ≤ {_th["p90"]:g}s ｜ '
+                f'Avg TTFT ≤ {_th["p50"]:g}s ｜ Avg Rate &gt; {RATE_MIN_TOKENS_PER_SEC:g} t/s ｜ '
+                f'成功率 100%（不达标行标红，超标单元格加粗）</div>')
         P.append('<div class="table-wrap"><table><thead><tr>'
                  '<th>并发</th><th>总请求</th><th>成功</th><th>失败</th><th>成功率</th>'
                  '<th>Avg TTFT(s)</th><th>Min TTFT(s)</th><th>Max TTFT(s)</th>'
@@ -400,6 +456,7 @@ white-space:pre-wrap;word-break:break-word;max-height:240px;overflow:auto}}
                  '<th>Output TPM</th><th>Output TPS</th><th>Input TPM</th><th>TPM</th>'
                  '</tr></thead><tbody>')
         for s in stats:
+            sla = sla_map[id(s)]
             rate = s["success_rate"]
             cls = "good" if rate >= 0.95 else ("bad" if rate < 0.8 else "")
             cells = [
@@ -422,7 +479,17 @@ white-space:pre-wrap;word-break:break-word;max-height:240px;overflow:auto}}
                 _fmt(s["output_tpm"]), _fmt(s["output_tps"]),
                 _fmt(s["input_tpm"]), _fmt(s["tpm"]),
             ]
-            P.append("<tr>" + "".join(f"<td>{c}</td>" for c in cells) + "</tr>")
+            # 超标单元格标红（列序与上面的 cells 一一对应）
+            if "成功率" in sla["failed_fields"]:
+                cells[4] = f'<span class="cell-bad">{cells[4]}</span>'
+            if FIELD_AVG_TTFT in sla["failed_fields"]:
+                cells[5] = f'<span class="cell-bad">{cells[5]}</span>'
+            if FIELD_P90_TTFT in sla["failed_fields"]:
+                cells[9] = f'<span class="cell-bad">{cells[9]}</span>'
+            if FIELD_AVG_RATE in sla["failed_fields"]:
+                cells[17] = f'<span class="cell-bad">{cells[17]}</span>'
+            row_cls = ' class="row-bad"' if not sla["pass"] else ""
+            P.append(f"<tr{row_cls}>" + "".join(f"<td>{c}</td>" for c in cells) + "</tr>")
         P.append("</tbody></table></div>")
 
     # ── 三、失败分析 ──

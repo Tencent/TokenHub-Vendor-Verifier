@@ -195,7 +195,25 @@ python3 scripts/gen_report_from_db.py --results-dir results --client "供应商�
   ITL：Avg / P50 / P90 / P95 / P99（token 间隔，秒）
   Token：Avg Prompt / Avg Completion / Total Tokens
   吞吐：Output TPM / Output TPS / Input TPM / TPM
+  SLA判定 / SLA未达标项：逐行验收结论（见下）
+SLA判定标准 sheet：各档位 TTFT P50/P90 阈值 + 吞吐下限，便于对照
 ```
+
+### SLA 不达标标红
+
+两份报告都会按 `性能验收标准.xlsx` 的阈值逐行判定，**不达标直接标红**（阈值单一事实源：`scripts/sla_eval.py`）：
+
+| 判定项 | 口径 |
+|------|------|
+| 请求成功率 | 必须 100% |
+| Avg TTFT | ≤ 档位 P50 阈值（<4K:2s / <8K:2.5s / <32K:4s / <64K:8s / <128K:15s / <256K:30s） |
+| P90 TTFT | ≤ 档位 P90 阈值（5s / 5s / 8s / 15s / 35s / 70s） |
+| Avg Rate(t/s) | > 30 t/s（OTPS 下限） |
+
+- xlsx：不达标行整行淡红，超标单元格深红加粗，`SLA未达标项` 列给出具体数值与阈值；
+- html：不达标行 `row-bad` 淡红，超标单元格 `cell-bad` 深红，每张表上方标出该档位阈值，总体结论多一张「SLA 不达标」卡片并列出明细。
+
+> 档位按该行实测 `Avg Prompt Tokens` 归档；不在 1K~256K 区间（如 512k/1m 超长档）只记录提示、不参与判定。
 
 > 失败请求的逐条明细只在 HTML 报告第四章「失败请求明细」中呈现，xlsx 不再包含该 sheet。
 
