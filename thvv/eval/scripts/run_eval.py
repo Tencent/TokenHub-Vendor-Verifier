@@ -743,7 +743,7 @@ def build_eval_command(args, dataset_key, run_dir=None):
             "generation_config": {
                 # 与主模型采样温度保持同一口径（注册表默认 1.0）
                 "temperature": float(temperature),
-                "max_tokens": 4096,
+                "max_tokens": 32768,
             },
         }
         subsets = []
