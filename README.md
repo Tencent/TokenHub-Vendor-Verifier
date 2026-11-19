@@ -157,8 +157,7 @@ thvv/eval/results/<provider>-<model>-<timestamp>/
 | SWE-bench_Verified_Mini_Agentic | - | 85.42 | 83.67 | 85.71 | 85.37 | 84 |
 
 > "-" 表示该模型未提供该数据集结果；详细数据见 `thvv/eval/效果验收标准.xlsx`。
-> 智谱三个模型为 2026-11-19 基线（构建 498 / 499 / 500），取报告「有效题通过率」原文。LongBench 用 short。`glm-5.3` 的 SWE-bench 本次为 partial（35/41），该格仅供参考。
-> ArXiv-Math 的 kimi-k3（42/102）、kimi-k3.1-pro（51/95）、deepseek-v4.1-flash-1017（39/102）取 2026-11-18 报告原文。`kimi-k3.1-pro` 为 partial（有效评分 95/103），该格仅供参考。
+> 智谱三个模型为 2026-11-19 基线（构建 498 / 499 / 500），取报告「有效题通过率」原文。
 
 ---
 
