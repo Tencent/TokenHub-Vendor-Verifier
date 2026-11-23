@@ -375,28 +375,41 @@ FIELD_CACHE_HIT = "Avg Cache Hit Ratio"
 SLA_FIELDS = (FIELD_SUCCESS, FIELD_AVG_TTFT, FIELD_P90_TTFT, FIELD_AVG_RATE)
 
 # 上下文分桶准入：实测相对基准 ≥ 60%。
-# TPS / KV（越大越好）= 实测 / 基准；TTFT（越小越好）= 基准 / 实测。
+# TPS（越大越好）= 实测 / 基准；TTFT（越小越好）= 基准 / 实测。
 # 分桶按压测档位标签，不按实测 prompt token：
 #   1k–128k → ≤128K，200k → 128K–200K，512k/1m → 200K–1M。
+# KV 命中不使用上表里的线上命中率。数据集公共前缀比例就是该档能达到的上限，
+# 基准用设计命中率（_KV_DESIGN_PCT）；1m 仍是冷数据，不判定 KV。
 ADMISSION_RATIO = 0.60
-# (tps_p50, tps_p5, ttft_p50_s, ttft_p95_s, kv_pct)
-_ADMISSION_TABLES: Dict[str, Dict[str, Tuple[float, float, float, float, float]]] = {
+# (tps_p50, tps_p5, ttft_p50_s, ttft_p95_s)
+_ADMISSION_TABLES: Dict[str, Dict[str, Tuple[float, float, float, float]]] = {
     "kimi-k3.1-pro": {
-        "le_128k": (54.6, 28.2, 4.28, 9.85, 88.98),
-        "128_200k": (58.1, 30.4, 5.65, 12.02, 93.67),
-        "200k_1m": (60.3, 31.6, 6.52, 15.38, 93.88),
+        "le_128k": (54.6, 28.2, 4.28, 9.85),
+        "128_200k": (58.1, 30.4, 5.65, 12.02),
+        "200k_1m": (60.3, 31.6, 6.52, 15.38),
     },
     # flashx 必须写在 flash 前面，避免被更短的名字截走
     "glm-5.3-flashx": {
-        "le_128k": (160.0, 105.3, 2.08, 4.93, 91.29),
-        "128_200k": (166.9, 108.0, 2.52, 5.52, 95.72),
-        "200k_1m": (166.3, 107.2, 3.51, 7.63, 95.76),
+        "le_128k": (160.0, 105.3, 2.08, 4.93),
+        "128_200k": (166.9, 108.0, 2.52, 5.52),
+        "200k_1m": (166.3, 107.2, 3.51, 7.63),
     },
     "glm-5.3-flash": {
-        "le_128k": (61.8, 34.5, 2.61, 9.17, 91.60),
-        "128_200k": (58.5, 35.9, 3.28, 10.85, 95.73),
-        "200k_1m": (63.7, 36.4, 4.18, 15.77, 95.38),
+        "le_128k": (61.8, 34.5, 2.61, 9.17),
+        "128_200k": (58.5, 35.9, 3.28, 10.85),
+        "200k_1m": (63.7, 36.4, 4.18, 15.77),
     },
+}
+# 数据集设计命中率（%）。与 build_hot_dataset.HIT_RATIO 一致。
+_KV_DESIGN_PCT = {
+    "1k": 33.3,
+    "9k": 67.2,
+    "16k": 67.2,
+    "32k": 89.5,
+    "64k": 89.5,
+    "128k": 89.5,
+    "200k": 96.0,
+    "512k": 96.8,
 }
 _ADMISSION_BANDS = (
     ("le_128k", "≤128K"),
@@ -444,12 +457,23 @@ def _band_label(band: Optional[str]) -> str:
     return band or ""
 
 
+def kv_design_pct(bucket: Optional[str]) -> Optional[float]:
+    """该压测档位的 KV 设计命中率（百分数）。1m 和无前缀档位返回 None，不判定。"""
+    return _KV_DESIGN_PCT.get((bucket or "").strip().lower())
+
+
+def kv_design_rows() -> List[Dict[str, Any]]:
+    """数据集各档 KV 设计命中率，供 SLA 判定标准 sheet。"""
+    return [{"bucket": bucket, "kv_pct": pct} for bucket, pct in _KV_DESIGN_PCT.items()]
+
+
 def admission_baseline(model: Optional[str], bucket: Optional[str]) -> Optional[Dict[str, Any]]:
     key = admission_model_key(model)
     band = admission_band(bucket)
     if key is None or band is None:
         return None
-    tps_p50, tps_p5, ttft_p50, ttft_p95, kv_pct = _ADMISSION_TABLES[key][band]
+    tps_p50, tps_p5, ttft_p50, ttft_p95 = _ADMISSION_TABLES[key][band]
+    design = kv_design_pct(bucket)
     return {
         "model_key": key,
         "band": band,
@@ -458,8 +482,8 @@ def admission_baseline(model: Optional[str], bucket: Optional[str]) -> Optional[
         "tps_p5": tps_p5,
         "ttft_p50": ttft_p50,
         "ttft_p95": ttft_p95,
-        "kv": kv_pct / 100.0,
-        "kv_pct": kv_pct,
+        "kv": None if design is None else design / 100.0,
+        "kv_pct": design,
         "ratio_min": ADMISSION_RATIO,
     }
 
@@ -541,14 +565,16 @@ def evaluate_admission_row(
                violations, failed_fields, label)
     _check_low(p95_ttft_s, base["ttft_p95"], FIELD_P95_TTFT, "P95 TTFT",
                violations, failed_fields, label)
-    _check_high(cache_hit_ratio, base["kv"], FIELD_CACHE_HIT, "KV 命中", "",
-                violations, failed_fields, label)
-    # KV 文案用百分比，覆盖上面按比值写出的数字
-    if FIELD_CACHE_HIT in failed_fields and cache_hit_ratio is not None:
-        violations = [v for v in violations if not v.startswith("KV 命中")]
-        ratio = cache_hit_ratio / base["kv"] if base["kv"] else 0
-        violations.append(
-            f"KV 命中 {cache_hit_ratio * 100:.2f}% / 基准 {base['kv_pct']:.2f}% = {ratio * 100:.2f}% < 60%（{label}）")
+    # 1m 等没有设计前缀的档位不判定 KV
+    if base["kv"] is not None:
+        kv_label = (bucket or "").strip().lower() or label
+        _check_high(cache_hit_ratio, base["kv"], FIELD_CACHE_HIT, "KV 命中", "",
+                    violations, failed_fields, kv_label)
+        if FIELD_CACHE_HIT in failed_fields and cache_hit_ratio is not None:
+            violations = [v for v in violations if not v.startswith("KV 命中")]
+            ratio = cache_hit_ratio / base["kv"] if base["kv"] else 0
+            violations.append(
+                f"KV 命中 {cache_hit_ratio * 100:.2f}% / 基准 {base['kv_pct']:.2f}% = {ratio * 100:.2f}% < 60%（{kv_label}）")
     return {
         "mode": "admission",
         "tier": label,
@@ -658,13 +684,13 @@ def evaluate_report_row(
 
 
 def admission_threshold_rows(model: Optional[str]) -> List[Dict[str, Any]]:
-    """准入模型的三档基准及 60% 门槛，供 SLA 判定标准 sheet。"""
+    """准入模型的三档 TPS / TTFT 基准，供 SLA 判定标准 sheet。KV 另见 kv_design_rows。"""
     key = admission_model_key(model)
     if key is None:
         return []
     rows = []
     for band, label in _ADMISSION_BANDS:
-        tps_p50, tps_p5, ttft_p50, ttft_p95, kv_pct = _ADMISSION_TABLES[key][band]
+        tps_p50, tps_p5, ttft_p50, ttft_p95 = _ADMISSION_TABLES[key][band]
         rows.append({
             "model": key,
             "band": label,
@@ -672,12 +698,10 @@ def admission_threshold_rows(model: Optional[str]) -> List[Dict[str, Any]]:
             "tps_p5": tps_p5,
             "ttft_p50": ttft_p50,
             "ttft_p95": ttft_p95,
-            "kv_pct": kv_pct,
             "rate_floor": tps_p50 * ADMISSION_RATIO,
             "p5_floor": tps_p5 * ADMISSION_RATIO,
             "ttft_p50_ceil": ttft_p50 / ADMISSION_RATIO,
             "ttft_p95_ceil": ttft_p95 / ADMISSION_RATIO,
-            "kv_floor": kv_pct * ADMISSION_RATIO,
         })
     return rows
 

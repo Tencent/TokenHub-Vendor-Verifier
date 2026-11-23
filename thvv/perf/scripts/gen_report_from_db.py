@@ -33,7 +33,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from gen_perf_dashboard import _failed_detail, failure_reasons  # noqa: E402
 from sla_eval import (  # noqa: E402
-    evaluate_report_row, admission_threshold_rows,
+    evaluate_report_row, admission_threshold_rows, kv_design_rows,
 )
 
 
@@ -459,25 +459,36 @@ def write_sla_sheet(wb, model: str = ""):
     admitted = admission_threshold_rows(model)
     if admitted:
         heads = ["模型", "上下文长度", "TPS P50", "TPS P5",
-                 "TTFT P50(s)", "TTFT P95(s)", "KV 命中(%)"]
+                 "TTFT P50(s)", "TTFT P95(s)"]
         for c, h in enumerate(heads, start=1):
             cell = ws.cell(row=1, column=c, value=h)
             cell.font, cell.fill, cell.alignment = header_font, header_fill, header_align
         for r, item in enumerate(admitted, start=2):
             vals = [item["model"], item["band"], item["tps_p50"], item["tps_p5"],
-                    item["ttft_p50"], item["ttft_p95"], item["kv_pct"]]
+                    item["ttft_p50"], item["ttft_p95"]]
             for c, v in enumerate(vals, start=1):
                 cell = ws.cell(row=r, column=c, value=v)
                 if c >= 3:
                     cell.number_format = "0.00"
-        note_row = len(admitted) + 2
+        kv_title = len(admitted) + 3
+        ws.cell(row=kv_title, column=1, value="KV 命中基准").font = Font(bold=True)
+        kv_head = kv_title + 1
+        for c, h in enumerate(["档位", "设计命中率(%)"], start=1):
+            cell = ws.cell(row=kv_head, column=c, value=h)
+            cell.font, cell.fill, cell.alignment = header_font, header_fill, header_align
+        for i, item in enumerate(kv_design_rows()):
+            ws.cell(row=kv_head + 1 + i, column=1, value=item["bucket"])
+            cell = ws.cell(row=kv_head + 1 + i, column=2, value=item["kv_pct"])
+            cell.number_format = "0.0"
+        note_row = kv_head + len(kv_design_rows()) + 2
         ws.cell(row=note_row, column=1, value="判定").font = Font(bold=True)
         ws.cell(row=note_row, column=2, value=(
-            "TPS P50、TPS P5、KV 命中 = 实测/基准；TTFT P50、TTFT P95 = 基准/实测。"
+            "TPS P50、TPS P5 = 实测/基准；TTFT P50、TTFT P95 = 基准/实测。"
             "1k–128k 用 ≤128K，200k 用 128K–200K，512k/1m 用 200K–1M。"
+            "KV 命中 = 实测/该档设计命中率，1m 不判定。"
             "任一指标不够则整行标红，未达标单元格深红加粗。"
         ))
-        for c, w in enumerate([18, 14, 14, 14, 16, 16, 14], start=1):
+        for c, w in enumerate([18, 16, 14, 14, 16, 16], start=1):
             ws.column_dimensions[ws.cell(row=1, column=c).column_letter].width = w
         ws.freeze_panes = "A2"
         return
