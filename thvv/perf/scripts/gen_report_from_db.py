@@ -33,8 +33,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from gen_perf_dashboard import _failed_detail, failure_reasons  # noqa: E402
 from sla_eval import (  # noqa: E402
-    FIELD_AVG_RATE, FIELD_AVG_TTFT, FIELD_P90_TTFT, FIELD_SUCCESS,
-    RATE_MIN_TOKENS_PER_SEC, evaluate_report_row, threshold_rows,
+    evaluate_report_row, admission_threshold_rows,
 )
 
 
@@ -376,7 +375,7 @@ def collect_failures(runs, api_url: str = ""):
     """
     url = _safe_url(api_url)
     items = []
-    for run_tag, db, vendor, bucket, parallel in runs:
+    for run_tag, db, vendor, bucket, parallel, _model in runs:
         try:
             conn = sqlite3.connect(str(db))
             try:
@@ -451,41 +450,49 @@ def write_failure_sheet(wb, items):
     ws.freeze_panes = "A2"
 
 
-def write_sla_sheet(wb):
+def write_sla_sheet(wb, model: str = ""):
     """追加「SLA判定标准」sheet：写明每个档位的验收阈值，便于对照标红结果。"""
     ws = wb.create_sheet("SLA判定标准")
     header_font = Font(bold=True, color="FFFFFF")
     header_fill = PatternFill("solid", fgColor="4472C4")
     header_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
-    heads = ["输入 tokens 档位", "下界(含)", "上界(不含)",
-             "Avg TTFT 阈值(s)", "P90 TTFT 阈值(s)", "Avg Rate 下限(t/s)"]
-    for c, h in enumerate(heads, start=1):
-        cell = ws.cell(row=1, column=c, value=h)
-        cell.font, cell.fill, cell.alignment = header_font, header_fill, header_align
+    admitted = admission_threshold_rows(model)
+    if admitted:
+        heads = ["模型", "上下文长度", "TPS P50", "TPS P5",
+                 "TTFT P50(s)", "TTFT P95(s)", "KV 命中(%)"]
+        for c, h in enumerate(heads, start=1):
+            cell = ws.cell(row=1, column=c, value=h)
+            cell.font, cell.fill, cell.alignment = header_font, header_fill, header_align
+        for r, item in enumerate(admitted, start=2):
+            vals = [item["model"], item["band"], item["tps_p50"], item["tps_p5"],
+                    item["ttft_p50"], item["ttft_p95"], item["kv_pct"]]
+            for c, v in enumerate(vals, start=1):
+                cell = ws.cell(row=r, column=c, value=v)
+                if c >= 3:
+                    cell.number_format = "0.00"
+        note_row = len(admitted) + 2
+        ws.cell(row=note_row, column=1, value="判定").font = Font(bold=True)
+        ws.cell(row=note_row, column=2, value=(
+            "TPS P50、TPS P5、KV 命中 = 实测/基准；TTFT P50、TTFT P95 = 基准/实测。"
+            "1k–128k 用 ≤128K，200k 用 128K–200K，512k/1m 用 200K–1M。"
+            "任一指标不够则整行标红，未达标单元格深红加粗。"
+        ))
+        for c, w in enumerate([18, 14, 14, 14, 16, 16, 14], start=1):
+            ws.column_dimensions[ws.cell(row=1, column=c).column_letter].width = w
+        ws.freeze_panes = "A2"
+        return
 
-    r = 2
-    for item in threshold_rows():
-        vals = [item["tier"], item["lo"], item["hi"], item["p50"], item["p90"],
-                item["rate_min"]]
-        for c, v in enumerate(vals, start=1):
-            cell = ws.cell(row=r, column=c, value=v)
-            if c >= 4:
-                cell.number_format = "0.0"
-        r += 1
-
-    # 通用要求（不按档位）
-    for label, value in [
-        ("请求成功率", "必须 100%（任一失败即判定不达标）"),
-        ("判定来源", "thvv/perf/性能验收标准.xlsx（3.1 TTFT / 3.2 OTPS）"),
-        ("说明", "「性能指标」sheet 中不达标行整行淡红，超标单元格深红加粗；SLA未达标项 列给出具体数值与阈值。"),
-    ]:
-        ws.cell(row=r, column=1, value=label).font = Font(bold=True)
-        ws.cell(row=r, column=2, value=value)
-        r += 1
-
-    for c, w in enumerate([18, 12, 12, 20, 20, 20], start=1):
-        ws.column_dimensions[ws.cell(row=1, column=c).column_letter].width = w
-    ws.freeze_panes = "A2"
+    ws.cell(row=1, column=1, value="状态").font = header_font
+    ws.cell(row=1, column=1).fill = header_fill
+    ws.cell(row=1, column=2, value="说明").font = header_font
+    ws.cell(row=1, column=2).fill = header_fill
+    ws.cell(row=2, column=1, value="已暂停").font = Font(bold=True)
+    ws.cell(row=2, column=2, value=(
+        "绝对阈值标红已暂停：成功率 100%、Avg TTFT、P90 TTFT、Avg Rate > 30 t/s 暂不参与标红。"
+        "kimi-k3.1-pro、glm-5.3-flashx、glm-5.3-flash 仍按分桶基准的 60% 标红。"
+    ))
+    ws.column_dimensions["A"].width = 14
+    ws.column_dimensions["B"].width = 88
 
 
 def bucket_tokens(bucket: str) -> int:
@@ -513,7 +520,8 @@ def find_run_dirs(results_root: Path):
             vendor = tag_parts[0]
             # 找第一个像 1k/9k/16k/200k/512k/1m 的 token（k 与 m 两种单位）
             bucket = next((p for p in tag_parts if re.fullmatch(r"\d+[km]", p)), "?")
-            runs.append((run_tag, db, vendor, bucket, parallel))
+            model_name = parts[1] if len(parts) >= 3 else ""
+            runs.append((run_tag, db, vendor, bucket, parallel, model_name))
         except Exception:
             continue
     # 按输入长度（档位）从小到大排，同档位内按并发升序：
@@ -528,6 +536,7 @@ def main():
     ap.add_argument("--client", default="", help="客户端位置（如：美国硅谷 / 国内广州）")
     ap.add_argument("--network", default="", help="后端网络链接说明")
     ap.add_argument("--api-url", default="", help="被测接口地址，写入「失败请求详情」的请求URL列（query/userinfo 会被去除）")
+    ap.add_argument("--model", default="", help="模型名；命中准入表时按分桶基准的 60% 标红")
     ap.add_argument("--out", default="", help="输出 xlsx 路径，默认 results/性能测试报告_<ts>.xlsx")
     ap.add_argument(
         "--filter",
@@ -548,7 +557,7 @@ def main():
         sys.exit(1)
 
     rows = []
-    for run_tag, db, vendor, bucket, parallel in runs:
+    for run_tag, db, vendor, bucket, parallel, model_name in runs:
         stats = calc_stats(db, bucket, parallel, args.tpm_window_sec)
         if not stats:
             print(f"[skip] {run_tag} 无成功样本")
@@ -556,6 +565,8 @@ def main():
         stats["客户端"] = args.client
         stats["后端网路链接"] = args.network or vendor
         stats["数据集"] = f"{bucket} ({run_tag})"
+        stats["_model"] = args.model or model_name
+        stats["_bucket"] = bucket
         rows.append(stats)
         print(f"[{run_tag}] success={stats['成功数']}/{stats['总请求数']} | "
               f"TTFT={stats['Avg TTFT(s)']:.3f}s | TTLT={stats['Avg TTLT(s)']:.3f}s | "
@@ -587,6 +598,13 @@ def main():
             avg_ttft_s=r.get("Avg TTFT(s)"),
             p90_ttft_s=r.get("P90 TTFT(s)"),
             avg_rate_tps=r.get("Avg Rate(t/s)"),
+            model=r.get("_model"),
+            bucket=r.get("_bucket"),
+            p50_ttft_s=r.get("P50 TTFT(s)"),
+            p95_ttft_s=r.get("P95 TTFT(s)"),
+            p50_rate_tps=r.get("P50 Rate(t/s)"),
+            p5_rate_tps=r.get("P5 Rate(t/s)"),
+            cache_hit_ratio=r.get("Avg Cache Hit Ratio"),
         )
         pass_count += 1 if sla["pass"] else 0
         detail = "；".join(sla["violations"]) or ""
@@ -645,7 +663,8 @@ def main():
     # 失败明细遍历全部 runs（而非 rows）：全失败的 run 不进「性能指标」，但正是最需要排查的
     failures = collect_failures(runs, args.api_url)
     write_failure_sheet(wb, failures)
-    write_sla_sheet(wb)
+    sheet_model = args.model or next((r.get("_model") for r in rows if r.get("_model")), "")
+    write_sla_sheet(wb, sheet_model)
 
     out_path = Path(args.out) if args.out else (
         root / f"性能测试报告_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"

@@ -425,6 +425,7 @@ cmd_bench() {
     echo "[report] 生成 Excel 指标报告 ..."
     python3 scripts/gen_report_from_db.py --results-dir results \
         --filter "perf-${bucket}-${ts}" \
+        ${MODEL_NAME:+--model "$MODEL_NAME"} \
         ${CLIENT:+--client "$CLIENT"} \
         ${API_URL:+--api-url "$API_URL"} \
         --no-tpm-html \
@@ -687,6 +688,7 @@ cmd_bench_all() {
     tlog "[report] 生成 Excel 指标报告 ..."
     python3 scripts/gen_report_from_db.py --results-dir results \
         ${xlsx_filter[@]+"${xlsx_filter[@]}"} \
+        ${MODEL_NAME:+--model "$MODEL_NAME"} \
         ${CLIENT:+--client "$CLIENT"} \
         ${API_URL:+--api-url "$API_URL"} \
         --no-tpm-html \

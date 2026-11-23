@@ -49,8 +49,9 @@ TIERS: List[Tuple[str, int, int, Dict[str, float]]] = [
     ("<256K", 128_000, 256_000, {"p50": 30.0, "p90": 70.0}),
 ]
 
-# 通用吞吐阈值
+# 通用吞吐阈值。报告标红里的绝对阈值已暂停，见 ABSOLUTE_SLA_ENABLED。
 RATE_MIN_TOKENS_PER_SEC = 30.0   # avg_token_rates 必须 > 30
+ABSOLUTE_SLA_ENABLED = False
 
 
 def classify_tier(avg_prompt_tokens: Optional[float]) -> Optional[str]:
@@ -366,7 +367,101 @@ FIELD_SUCCESS = "成功率"
 FIELD_AVG_TTFT = "Avg TTFT(s)"
 FIELD_P90_TTFT = "P90 TTFT(s)"
 FIELD_AVG_RATE = "Avg Rate(t/s)"
+FIELD_P50_TTFT = "P50 TTFT(s)"
+FIELD_P95_TTFT = "P95 TTFT(s)"
+FIELD_P50_RATE = "P50 Rate(t/s)"
+FIELD_P5_RATE = "P5 Rate(t/s)"
+FIELD_CACHE_HIT = "Avg Cache Hit Ratio"
 SLA_FIELDS = (FIELD_SUCCESS, FIELD_AVG_TTFT, FIELD_P90_TTFT, FIELD_AVG_RATE)
+
+# 上下文分桶准入：实测相对基准 ≥ 60%。
+# TPS / KV（越大越好）= 实测 / 基准；TTFT（越小越好）= 基准 / 实测。
+# 分桶按压测档位标签，不按实测 prompt token：
+#   1k–128k → ≤128K，200k → 128K–200K，512k/1m → 200K–1M。
+ADMISSION_RATIO = 0.60
+# (tps_p50, tps_p5, ttft_p50_s, ttft_p95_s, kv_pct)
+_ADMISSION_TABLES: Dict[str, Dict[str, Tuple[float, float, float, float, float]]] = {
+    "kimi-k3.1-pro": {
+        "le_128k": (54.6, 28.2, 4.28, 9.85, 88.98),
+        "128_200k": (58.1, 30.4, 5.65, 12.02, 93.67),
+        "200k_1m": (60.3, 31.6, 6.52, 15.38, 93.88),
+    },
+    # flashx 必须写在 flash 前面，避免被更短的名字截走
+    "glm-5.3-flashx": {
+        "le_128k": (160.0, 105.3, 2.08, 4.93, 91.29),
+        "128_200k": (166.9, 108.0, 2.52, 5.52, 95.72),
+        "200k_1m": (166.3, 107.2, 3.51, 7.63, 95.76),
+    },
+    "glm-5.3-flash": {
+        "le_128k": (61.8, 34.5, 2.61, 9.17, 91.60),
+        "128_200k": (58.5, 35.9, 3.28, 10.85, 95.73),
+        "200k_1m": (63.7, 36.4, 4.18, 15.77, 95.38),
+    },
+}
+_ADMISSION_BANDS = (
+    ("le_128k", "≤128K"),
+    ("128_200k", "128K–200K"),
+    ("200k_1m", "200K–1M"),
+)
+_ADMISSION_KEYS = ("kimi-k3.1-pro", "glm-5.3-flashx", "glm-5.3-flash")
+
+
+def _bucket_tokens(bucket: Optional[str]) -> int:
+    import re
+    m = re.fullmatch(r"(\d+)([km])", (bucket or "").strip().lower())
+    if not m:
+        return 1 << 60
+    n = int(m.group(1))
+    return n * (1024 if m.group(2) == "k" else 1024 * 1024)
+
+
+def admission_model_key(model: Optional[str]) -> Optional[str]:
+    """模型名命中准入表时返回表键；flashx 优先于 flash。"""
+    low = (model or "").lower().replace("_", "-")
+    if not low:
+        return None
+    for key in _ADMISSION_KEYS:
+        if key in low:
+            return key
+    return None
+
+
+def admission_band(bucket: Optional[str]) -> Optional[str]:
+    n = _bucket_tokens(bucket)
+    if n > 1024 * 1024:
+        return None
+    if n <= 128 * 1024:
+        return "le_128k"
+    if n <= 200 * 1024:
+        return "128_200k"
+    return "200k_1m"
+
+
+def _band_label(band: Optional[str]) -> str:
+    for key, label in _ADMISSION_BANDS:
+        if key == band:
+            return label
+    return band or ""
+
+
+def admission_baseline(model: Optional[str], bucket: Optional[str]) -> Optional[Dict[str, Any]]:
+    key = admission_model_key(model)
+    band = admission_band(bucket)
+    if key is None or band is None:
+        return None
+    tps_p50, tps_p5, ttft_p50, ttft_p95, kv_pct = _ADMISSION_TABLES[key][band]
+    return {
+        "model_key": key,
+        "band": band,
+        "band_label": _band_label(band),
+        "tps_p50": tps_p50,
+        "tps_p5": tps_p5,
+        "ttft_p50": ttft_p50,
+        "ttft_p95": ttft_p95,
+        "kv": kv_pct / 100.0,
+        "kv_pct": kv_pct,
+        "ratio_min": ADMISSION_RATIO,
+    }
 
 
 def threshold_rows() -> List[Dict[str, Any]]:
@@ -384,12 +479,99 @@ def threshold_rows() -> List[Dict[str, Any]]:
     ]
 
 
+def _check_high(measured, baseline, field, label, unit, violations, failed_fields, band_label):
+    """越大越好：实测 / 基准 ≥ 60%。"""
+    if measured is None or baseline is None or baseline <= 0:
+        violations.append(f"{label} 缺失（档位 {band_label}）")
+        failed_fields.add(field)
+        return
+    ratio = measured / baseline
+    if ratio + 1e-12 < ADMISSION_RATIO:
+        violations.append(
+            f"{label} {measured:.2f}{unit} / 基准 {baseline:.2f}{unit} = {ratio * 100:.2f}% < 60%（{band_label}）")
+        failed_fields.add(field)
+
+
+def _check_low(measured, baseline, field, label, violations, failed_fields, band_label):
+    """越小越好：基准 / 实测 ≥ 60%。"""
+    if measured is None or baseline is None:
+        violations.append(f"{label} 缺失（档位 {band_label}）")
+        failed_fields.add(field)
+        return
+    if measured <= 0:
+        return
+    ratio = baseline / measured
+    if ratio + 1e-12 < ADMISSION_RATIO:
+        violations.append(
+            f"{label} 基准 {baseline:.2f}s / 实测 {measured:.2f}s = {ratio * 100:.2f}% < 60%（{band_label}）")
+        failed_fields.add(field)
+
+
+def evaluate_admission_row(
+    model: Optional[str],
+    bucket: Optional[str],
+    p50_rate_tps: Optional[float],
+    p5_rate_tps: Optional[float],
+    p50_ttft_s: Optional[float],
+    p95_ttft_s: Optional[float],
+    cache_hit_ratio: Optional[float],
+) -> Optional[Dict[str, Any]]:
+    """命中准入模型时按分桶基准判定；未命中返回 None，调用方走原绝对阈值。"""
+    if admission_model_key(model) is None:
+        return None
+    base = admission_baseline(model, bucket)
+    violations: List[str] = []
+    failed_fields: set = set()
+    if base is None:
+        violations.append(f"档位 {bucket or '-'} 超过 1M，无准入基准（不判定）")
+        return {
+            "mode": "admission",
+            "tier": None,
+            "pass": True,
+            "violations": violations,
+            "failed_fields": failed_fields,
+            "thresholds": None,
+        }
+    label = base["band_label"]
+    _check_high(p50_rate_tps, base["tps_p50"], FIELD_P50_RATE, "P50 Rate", " t/s",
+                violations, failed_fields, label)
+    _check_high(p5_rate_tps, base["tps_p5"], FIELD_P5_RATE, "P5 Rate", " t/s",
+                violations, failed_fields, label)
+    _check_low(p50_ttft_s, base["ttft_p50"], FIELD_P50_TTFT, "P50 TTFT",
+               violations, failed_fields, label)
+    _check_low(p95_ttft_s, base["ttft_p95"], FIELD_P95_TTFT, "P95 TTFT",
+               violations, failed_fields, label)
+    _check_high(cache_hit_ratio, base["kv"], FIELD_CACHE_HIT, "KV 命中", "",
+                violations, failed_fields, label)
+    # KV 文案用百分比，覆盖上面按比值写出的数字
+    if FIELD_CACHE_HIT in failed_fields and cache_hit_ratio is not None:
+        violations = [v for v in violations if not v.startswith("KV 命中")]
+        ratio = cache_hit_ratio / base["kv"] if base["kv"] else 0
+        violations.append(
+            f"KV 命中 {cache_hit_ratio * 100:.2f}% / 基准 {base['kv_pct']:.2f}% = {ratio * 100:.2f}% < 60%（{label}）")
+    return {
+        "mode": "admission",
+        "tier": label,
+        "pass": not failed_fields,
+        "violations": violations,
+        "failed_fields": failed_fields,
+        "thresholds": base,
+    }
+
+
 def evaluate_report_row(
     avg_prompt_tokens: Optional[float],
     success_rate_f: Optional[float],
     avg_ttft_s: Optional[float],
     p90_ttft_s: Optional[float],
     avg_rate_tps: Optional[float],
+    model: Optional[str] = None,
+    bucket: Optional[str] = None,
+    p50_ttft_s: Optional[float] = None,
+    p95_ttft_s: Optional[float] = None,
+    p50_rate_tps: Optional[float] = None,
+    p5_rate_tps: Optional[float] = None,
+    cache_hit_ratio: Optional[float] = None,
 ) -> Dict[str, Any]:
     """单行性能指标的验收判定，给 gen_report_from_db / gen_perf_dashboard 标红用。
 
@@ -401,9 +583,27 @@ def evaluate_report_row(
 
     P5 Rate 只出现在报告列里，不参与达标判定。
 
+    命中 kimi-k3.1-pro / glm-5.3-flashx / glm-5.3-flash 时改走分桶准入（相对基准 ≥ 60%）。
+
     返回：
       {"tier", "pass", "violations": [...], "failed_fields": set(...), "thresholds"}
     """
+    admitted = evaluate_admission_row(
+        model, bucket, p50_rate_tps, p5_rate_tps, p50_ttft_s, p95_ttft_s, cache_hit_ratio,
+    )
+    if admitted is not None:
+        return admitted
+
+    if not ABSOLUTE_SLA_ENABLED:
+        return {
+            "mode": "disabled",
+            "tier": classify_tier(avg_prompt_tokens),
+            "pass": True,
+            "violations": [],
+            "failed_fields": set(),
+            "thresholds": None,
+        }
+
     violations: List[str] = []
     failed_fields: set = set()
 
@@ -448,12 +648,38 @@ def evaluate_report_row(
     # 只有「档位未归入」的提示不算不达标（与 evaluate_sla 一致）
     hard_fail = bool(failed_fields)
     return {
+        "mode": "absolute",
         "tier": tier,
         "pass": not hard_fail,
         "violations": violations,
         "failed_fields": failed_fields,
         "thresholds": (dict(th) if tier is not None else None),
     }
+
+
+def admission_threshold_rows(model: Optional[str]) -> List[Dict[str, Any]]:
+    """准入模型的三档基准及 60% 门槛，供 SLA 判定标准 sheet。"""
+    key = admission_model_key(model)
+    if key is None:
+        return []
+    rows = []
+    for band, label in _ADMISSION_BANDS:
+        tps_p50, tps_p5, ttft_p50, ttft_p95, kv_pct = _ADMISSION_TABLES[key][band]
+        rows.append({
+            "model": key,
+            "band": label,
+            "tps_p50": tps_p50,
+            "tps_p5": tps_p5,
+            "ttft_p50": ttft_p50,
+            "ttft_p95": ttft_p95,
+            "kv_pct": kv_pct,
+            "rate_floor": tps_p50 * ADMISSION_RATIO,
+            "p5_floor": tps_p5 * ADMISSION_RATIO,
+            "ttft_p50_ceil": ttft_p50 / ADMISSION_RATIO,
+            "ttft_p95_ceil": ttft_p95 / ADMISSION_RATIO,
+            "kv_floor": kv_pct * ADMISSION_RATIO,
+        })
+    return rows
 
 
 # ---------------------------------------------------------------------------

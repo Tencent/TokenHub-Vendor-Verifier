@@ -31,9 +31,9 @@ from typing import Any, Dict, List, Optional, Tuple
 # SLA 判定与 Excel 报告共用同一套阈值（同目录脚本）
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sla_eval import (  # noqa: E402
-    FIELD_AVG_RATE, FIELD_AVG_TTFT, FIELD_P90_TTFT,
-    RATE_MIN_TOKENS_PER_SEC, classify_tier, evaluate_report_row,
-    get_tier_thresholds,
+    FIELD_AVG_RATE, FIELD_AVG_TTFT, FIELD_CACHE_HIT, FIELD_P5_RATE,
+    FIELD_P50_RATE, FIELD_P50_TTFT, FIELD_P90_TTFT, FIELD_P95_TTFT,
+    FIELD_SUCCESS, evaluate_report_row,
 )
 
 
@@ -335,6 +335,13 @@ def render(dbs: List[Tuple[str, str, int, int, str]], title: str,
             avg_ttft_s=st.get("ttft_mean"),
             p90_ttft_s=st.get("ttft_p90"),
             avg_rate_tps=st.get("rate_mean"),
+            model=model_hint,
+            bucket=st.get("bucket"),
+            p50_ttft_s=st.get("ttft_p50"),
+            p95_ttft_s=st.get("ttft_p95"),
+            p50_rate_tps=st.get("rate_p50"),
+            p5_rate_tps=st.get("rate_p5"),
+            cache_hit_ratio=st.get("cache_hit_ratio"),
         )
 
     sla_map = {id(s): _sla_of(s) for s in all_stats}
@@ -435,17 +442,15 @@ white-space:pre-wrap;word-break:break-word;max-height:240px;overflow:auto}}
     for bucket in sorted(groups, key=bucket_tokens):
         stats = sorted(groups[bucket], key=lambda s: s["parallel"])
         P.append(f"<h3>档位 {bucket}</h3>")
-        # 该档位的验收阈值提示（按实际平均输入 tokens 归档，与判定口径一致）
-        _prompts = [s["prompt_tokens_mean"] for s in stats
-                    if s.get("prompt_tokens_mean") is not None]
-        _tier = classify_tier(sum(_prompts) / len(_prompts)) if _prompts else None
-        if _tier:
-            _th = get_tier_thresholds(_tier)
+        _sample = sla_map.get(id(stats[0])) if stats else None
+        if _sample and _sample.get("mode") == "admission" and _sample.get("thresholds"):
+            _b = _sample["thresholds"]
             P.append(
-                f'<div class="sla-hint">验收阈值（{_tier}）：P90 TTFT ≤ {_th["p90"]:g}s ｜ '
-                f'Avg TTFT ≤ {_th["p50"]:g}s ｜ '
-                f'Avg Rate &gt; {RATE_MIN_TOKENS_PER_SEC:g} t/s ｜ '
-                f'成功率 100%（不达标行标红，超标单元格加粗）</div>')
+                f'<div class="sla-hint">准入基准（{_b["band_label"]}）：'
+                f'TPS P50 {_b["tps_p50"]:.2f} ｜ TPS P5 {_b["tps_p5"]:.2f} ｜ '
+                f'TTFT P50 {_b["ttft_p50"]:.2f}s ｜ TTFT P95 {_b["ttft_p95"]:.2f}s ｜ '
+                f'KV 命中 {_b["kv_pct"]:.2f}%'
+                f'（不达标行标红，未达标单元格加粗）</div>')
         P.append('<div class="table-wrap"><table><thead><tr>'
                  '<th>并发</th><th>总请求</th><th>成功</th><th>失败</th><th>成功率</th>'
                  '<th>Avg TTFT(s)</th><th>Min TTFT(s)</th><th>Max TTFT(s)</th>'
@@ -482,14 +487,20 @@ white-space:pre-wrap;word-break:break-word;max-height:240px;overflow:auto}}
                 _fmt(s["input_tpm"]), _fmt(s["tpm"]),
             ]
             # 超标单元格标红（列序与上面的 cells 一一对应）
-            if "成功率" in sla["failed_fields"]:
-                cells[4] = f'<span class="cell-bad">{cells[4]}</span>'
-            if FIELD_AVG_TTFT in sla["failed_fields"]:
-                cells[5] = f'<span class="cell-bad">{cells[5]}</span>'
-            if FIELD_P90_TTFT in sla["failed_fields"]:
-                cells[9] = f'<span class="cell-bad">{cells[9]}</span>'
-            if FIELD_AVG_RATE in sla["failed_fields"]:
-                cells[17] = f'<span class="cell-bad">{cells[17]}</span>'
+            _bad_cols = {
+                FIELD_SUCCESS: 4,
+                FIELD_AVG_TTFT: 5,
+                FIELD_P50_TTFT: 8,
+                FIELD_P90_TTFT: 9,
+                FIELD_P95_TTFT: 10,
+                FIELD_AVG_RATE: 17,
+                FIELD_P5_RATE: 18,
+                FIELD_P50_RATE: 19,
+                FIELD_CACHE_HIT: 32,
+            }
+            for _field, _idx in _bad_cols.items():
+                if _field in sla["failed_fields"]:
+                    cells[_idx] = f'<span class="cell-bad">{cells[_idx]}</span>'
             row_cls = ' class="row-bad"' if not sla["pass"] else ""
             P.append(f"<tr{row_cls}>" + "".join(f"<td>{c}</td>" for c in cells) + "</tr>")
         P.append("</tbody></table></div>")
