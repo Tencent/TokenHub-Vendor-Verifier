@@ -134,6 +134,18 @@ if [[ -z "${TEMPERATURE:-}" ]]; then
 fi
 echo "[info] MODEL_NAME=$MODEL_NAME → temperature=$TEMPERATURE" >&2
 
+# Excel 产物名：性能测试报告[-供应商].xlsx
+# 流水线传入 PROVIDER（供应商名）；本地未设置时沿用原文件名。
+perf_report_xlsx_name() {
+    local vendor="${PROVIDER:-${CLIENT:-}}"
+    vendor=$(printf '%s' "$vendor" | tr -d '/\\:*?"<>|' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+    if [[ -n "$vendor" ]]; then
+        printf '性能测试报告-%s.xlsx\n' "$vendor"
+    else
+        printf '性能测试报告.xlsx\n'
+    fi
+}
+
 # 预热条数：每次测量前先发 N 条「不计入统计」的请求，把服务端 prefix cache 建好。
 # 为什么需要：每档数据集是 system + 4 组公共前缀 + 唯一尾部（见 datasets_clean/META.json），
 # evalscope 按行轮转取样本，前 4 条正好各命中一个前缀组、全是「首访」→ 冷启动。
@@ -391,7 +403,7 @@ cmd_bench() {
 
     # 报告出口（跑完才会到这里；Ctrl+C 中断会直接终止脚本，不生成报告）：
     #   性能测试报告.html = 阅读版：总体结论 + 并发梯度矩阵 + 失败原因聚合 + 失败请求逐条明细
-    #   性能测试报告.xlsx = 指标交付版：「性能指标」45 列聚合指标 + 「失败请求详情」sheet（14 列）
+    #   性能测试报告[-供应商].xlsx = 指标交付版：「性能指标」45 列聚合指标 + 「失败请求详情」sheet（14 列）
     # 先重算命中率，报告才能显示真实值（evalscope 流式 usage 解析有缺陷，
     # DeepSeek 把 usage 挂在有 choices 的 chunk 上，原生 KV Cache Hit Rate 恒为 0）。
     # 响应体内有 usage 明细 → 重算并写回 summary；没有明细 → 沿用 summary 原生值，不写回
@@ -408,16 +420,18 @@ cmd_bench() {
         --model "$MODEL_NAME" \
         --out "$out/性能测试报告.html" \
         2>&1 | tail -3 || echo "[warn] 报告生成失败，可手动运行: python3 scripts/gen_perf_dashboard.py --run-dir $out"
+    local xlsx_name
+    xlsx_name=$(perf_report_xlsx_name)
     echo "[report] 生成 Excel 指标报告 ..."
     python3 scripts/gen_report_from_db.py --results-dir results \
         --filter "perf-${bucket}-${ts}" \
         ${CLIENT:+--client "$CLIENT"} \
         ${API_URL:+--api-url "$API_URL"} \
         --no-tpm-html \
-        --out "$out/性能测试报告.xlsx" \
+        --out "$out/$xlsx_name" \
         2>&1 | tail -3 || echo "[warn] Excel 报告生成失败，可手动运行: python3 scripts/gen_report_from_db.py --results-dir results --filter perf-${bucket}-${ts}"
     echo "[report] 📄 报告(HTML): $out/性能测试报告.html"
-    echo "[report] 📊 报告(Excel): $out/性能测试报告.xlsx"
+    echo "[report] 📊 报告(Excel): $out/$xlsx_name"
 }
 
 cmd_report() {
@@ -646,7 +660,7 @@ cmd_bench_all() {
     tlog "  日志: $group_log"
     tlog "========================================================="
 
-    # 报告出口：跨档位汇总性能测试报告.html（阅读版）+ 性能测试报告.xlsx（指标交付版）
+    # 报告出口：跨档位汇总性能测试报告.html（阅读版）+ 性能测试报告[-供应商].xlsx（指标交付版）
     # （--run-dir 指向组目录；gen_perf_dashboard 的 os.walk 已开启 followlinks，
     #   组目录内的 run 软链可正常扫描，且不会混入 results/ 下其他历史 run）
     # 只统计本次跑出的 run：否则 results/ 下的历史构建会被一起算进交付表格
@@ -668,13 +682,15 @@ cmd_bench_all() {
         --model "$MODEL_NAME" \
         --out "$group_dir/性能测试报告.html" \
         2>&1 | tee -a "$group_log" || tlog "[warn] 报告生成失败，可手动运行: bash run.sh report --run-dir $group_dir"
+    local xlsx_name
+    xlsx_name=$(perf_report_xlsx_name)
     tlog "[report] 生成 Excel 指标报告 ..."
     python3 scripts/gen_report_from_db.py --results-dir results \
         ${xlsx_filter[@]+"${xlsx_filter[@]}"} \
         ${CLIENT:+--client "$CLIENT"} \
         ${API_URL:+--api-url "$API_URL"} \
         --no-tpm-html \
-        --out "$group_dir/性能测试报告.xlsx" \
+        --out "$group_dir/$xlsx_name" \
         2>&1 | tee -a "$group_log" || tlog "[warn] Excel 报告生成失败，可手动运行: bash run.sh report"
 
 
@@ -684,8 +700,8 @@ cmd_bench_all() {
     else
         tlog "⚠ 报告(HTML) 未生成，原因见 $group_log（可用 bash run.sh report --run-dir $group_dir 补）"
     fi
-    if [[ -f "$group_dir/性能测试报告.xlsx" ]]; then
-        tlog "📊 报告(Excel): $group_dir/性能测试报告.xlsx"
+    if [[ -f "$group_dir/$xlsx_name" ]]; then
+        tlog "📊 报告(Excel): $group_dir/$xlsx_name"
     else
         tlog "⚠ 报告(Excel) 未生成，原因见 $group_log"
     fi
