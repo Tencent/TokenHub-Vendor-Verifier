@@ -399,6 +399,12 @@ _ADMISSION_TABLES: Dict[str, Dict[str, Tuple[float, float, float, float]]] = {
         "128_200k": (58.5, 35.9, 3.28, 10.85),
         "200k_1m": (63.7, 36.4, 4.18, 15.77),
     },
+    # 短名在前，deepseek-v4.1-flash-1017 也会命中这条
+    "deepseek-v4.1-flash": {
+        "le_128k": (216.5, 134.3, 1.13, 2.09),
+        "128_200k": (223.8, 150.9, 1.44, 2.93),
+        "200k_1m": (221.9, 152.1, 1.71, 3.79),
+    },
 }
 # 数据集设计命中率（%）。与 build_hot_dataset.HIT_RATIO 一致。
 _KV_DESIGN_PCT = {
@@ -416,7 +422,9 @@ _ADMISSION_BANDS = (
     ("128_200k", "128K–200K"),
     ("200k_1m", "200K–1M"),
 )
-_ADMISSION_KEYS = ("kimi-k3.1-pro", "glm-5.3-flashx", "glm-5.3-flash")
+_ADMISSION_KEYS = (
+    "kimi-k3.1-pro", "glm-5.3-flashx", "glm-5.3-flash", "deepseek-v4.1-flash",
+)
 
 
 def _bucket_tokens(bucket: Optional[str]) -> int:
@@ -609,7 +617,8 @@ def evaluate_report_row(
 
     P5 Rate 只出现在报告列里，不参与达标判定。
 
-    命中 kimi-k3.1-pro / glm-5.3-flashx / glm-5.3-flash 时改走分桶准入（相对基准 ≥ 60%）。
+    命中 kimi-k3.1-pro / glm-5.3-flashx / glm-5.3-flash / deepseek-v4.1-flash
+    时改走分桶准入（相对基准 ≥ 60%）。
 
     返回：
       {"tier", "pass", "violations": [...], "failed_fields": set(...), "thresholds"}

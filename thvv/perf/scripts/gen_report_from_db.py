@@ -500,7 +500,7 @@ def write_sla_sheet(wb, model: str = ""):
     ws.cell(row=2, column=1, value="已暂停").font = Font(bold=True)
     ws.cell(row=2, column=2, value=(
         "绝对阈值标红已暂停：成功率 100%、Avg TTFT、P90 TTFT、Avg Rate > 30 t/s 暂不参与标红。"
-        "kimi-k3.1-pro、glm-5.3-flashx、glm-5.3-flash 仍按分桶基准的 60% 标红。"
+        "kimi-k3.1-pro、glm-5.3-flashx、glm-5.3-flash、deepseek-v4.1-flash 仍按分桶基准的 60% 标红。"
     ))
     ws.column_dimensions["A"].width = 14
     ws.column_dimensions["B"].width = 88
