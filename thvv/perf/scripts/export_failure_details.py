@@ -8,7 +8,7 @@
   python3 scripts/export_failure_details.py --out <路径>/failure_details.csv
 
 输出：failure_details.csv
-  columns: no, run, bucket, parallel, http_status,
+  columns: no, run, bucket, parallel, http_status, request_id,
            request, response, latency, ttft, error
 
 数据来源：
@@ -17,8 +17,7 @@
   - error            错误列（HTTP 错误体 JSON，含错误码/消息）
   - success=0 的行即为失败请求
 
-不提取 Request ID（与 eval 报告口径一致）：需要追踪单请求时
-以 response / error 列中的原始错误体为准。
+Request ID 从响应里的 request_id 或 completion id 提取，与性能报告同一套逻辑。
 """
 from __future__ import annotations
 
@@ -32,6 +31,9 @@ import sqlite3
 import sys
 from pathlib import Path
 from typing import Any
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from gen_perf_dashboard import _vendor_request_id  # noqa: E402
 
 
 def _log(msg: str) -> None:
@@ -135,7 +137,7 @@ def export(results_dir: Path, run_filter: str, out_path: Path) -> int:
     with open(out_path, "w", newline="", encoding="utf-8-sig") as f:
         writer = csv.writer(f)
         writer.writerow([
-            "no", "run", "bucket", "parallel", "http_status",
+            "no", "run", "bucket", "parallel", "http_status", "request_id",
             "request", "response", "latency", "ttft", "error",
         ])
         no = 0
@@ -154,6 +156,7 @@ def export(results_dir: Path, run_filter: str, out_path: Path) -> int:
                 response = resp_text or err_text
                 writer.writerow([
                     no, run_tag, bucket, parallel, http_status,
+                    _vendor_request_id(resp_msgs, err_text),
                     request, response,
                     row.get("latency"), row.get("first_chunk_latency"), err_text,
                 ])

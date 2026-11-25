@@ -6,8 +6,8 @@
   一、总体结论        指标卡片 + 处置建议
   二、并发梯度对比    按并发梯度做矩阵，一行一个并发档，横向比指标
   三、失败分析        失败原因聚合统计（不再逐条罗列）
-  四、失败请求明细    逐条罗列所有失败请求（HTTP状态码 / 请求Body / 响应Body /
-                      TTFT / TTLT，不提取 Request ID，与效果评测口径一致）
+  四、失败请求明细    逐条罗列所有失败请求（HTTP状态码 / 供应商请求 ID /
+                      请求Body / 响应Body / TTFT / TTLT）
 
 用法:
   python3 scripts/gen_perf_dashboard.py --results-dir results --out 性能测试报告.html
@@ -580,10 +580,97 @@ def failure_advice(agg: Counter) -> str:
 
 # 失败请求 Body 截断长度（报告为单文件 HTML，避免体积失控）
 _FAIL_BODY_CHARS = 2000
+# 供应商请求 id：显式 request_id，或 OpenAI 兼容流式 chunk 的 completion id。
+_REQUEST_ID_KEYS = (
+    "request_id", "requestId", "x-request-id", "x_request_id",
+    "X-Request-Id", "Request-Id",
+)
+_HEADER_ID_KEYS = {"x-request-id", "x-requestid", "request-id", "x-dashscope-request-id"}
+_ID_TOKEN_RE = re.compile(r"^[A-Za-z0-9_.:-]{6,128}$")
+_COMPLETION_ID_RE = re.compile(r"^(?:chat)?cmpl-[A-Za-z0-9_-]{8,}$")
+_REQUEST_ID_TEXT_RE = re.compile(
+    r"""(?:request[_ ]?id|x-request-id)["'\s:=]+["']?([A-Za-z0-9_.:-]{6,128})""",
+    re.I,
+)
+_COMPLETION_TEXT_RE = re.compile(r"\b((?:chat)?cmpl-[A-Za-z0-9_-]{8,})\b")
+
+
+def _take_request_id(obj: Any, found: List[str]) -> None:
+    """只看这一层和 error / headers，不进模型输出，避免把正文里的 id 当成请求号。"""
+    if not isinstance(obj, dict):
+        return
+    for key in _REQUEST_ID_KEYS:
+        val = obj.get(key)
+        if isinstance(val, str) and _ID_TOKEN_RE.match(val.strip()) and val.strip() not in found:
+            found.append(val.strip())
+    headers = obj.get("headers") or obj.get("response_headers")
+    if isinstance(headers, dict):
+        for key, val in headers.items():
+            if str(key).lower() in _HEADER_ID_KEYS and isinstance(val, str):
+                token = val.strip()
+                if _ID_TOKEN_RE.match(token) and token not in found:
+                    found.append(token)
+    err = obj.get("error")
+    if isinstance(err, dict):
+        _take_request_id(err, found)
+    elif isinstance(err, str):
+        for match in _REQUEST_ID_TEXT_RE.finditer(err):
+            token = match.group(1)
+            if token not in found:
+                found.append(token)
+
+
+def _vendor_request_id(msgs: Any, error_text: str = "") -> str:
+    """失败响应里的供应商请求 id。有 request_id 用 request_id，否则用 completion id。"""
+    request_ids: List[str] = []
+    completion_ids: List[str] = []
+    items = msgs if isinstance(msgs, list) else ([msgs] if isinstance(msgs, dict) else [])
+    for msg in items[:8]:
+        if isinstance(msg, str):
+            for match in _REQUEST_ID_TEXT_RE.finditer(msg):
+                token = match.group(1)
+                if token not in request_ids:
+                    request_ids.append(token)
+            if not completion_ids:
+                match = _COMPLETION_TEXT_RE.search(msg)
+                if match:
+                    completion_ids.append(match.group(1))
+            continue
+        if not isinstance(msg, dict):
+            continue
+        _take_request_id(msg, request_ids)
+        obj = str(msg.get("object") or "")
+        raw_id = msg.get("id")
+        if isinstance(raw_id, str):
+            token = raw_id.strip()
+            if token and token not in completion_ids and (
+                "completion" in obj or _COMPLETION_ID_RE.match(token)
+            ) and _ID_TOKEN_RE.match(token):
+                completion_ids.append(token)
+    if not request_ids and not completion_ids and error_text:
+        text = error_text.strip()
+        parsed = None
+        if text[:1] in "[{":
+            try:
+                parsed = json.loads(text)
+            except (json.JSONDecodeError, ValueError):
+                parsed = None
+        if isinstance(parsed, (dict, list)):
+            return _vendor_request_id(parsed if isinstance(parsed, list) else [parsed], "")
+        for match in _REQUEST_ID_TEXT_RE.finditer(text):
+            token = match.group(1)
+            if token not in request_ids:
+                request_ids.append(token)
+        match = _COMPLETION_TEXT_RE.search(text)
+        if match:
+            completion_ids.append(match.group(1))
+    if request_ids:
+        return request_ids[0]
+    return completion_ids[0] if completion_ids else ""
 
 
 def _failed_detail(row: dict, bucket: str, parallel: int, no: int) -> dict:
-    """提取单条失败请求的明细（不提取 Request ID，与效果评测口径一致）。"""
+    """提取单条失败请求的明细，含供应商侧请求 id。"""
     msgs = _decode_response_messages(row.get("response_messages"))
     status = ""
     if msgs and isinstance(msgs[-1], dict):
@@ -606,6 +693,7 @@ def _failed_detail(row: dict, bucket: str, parallel: int, no: int) -> dict:
         "bucket": bucket,
         "parallel": parallel,
         "status": status,
+        "request_id": _vendor_request_id(msgs, str(row.get("error") or "")),
         "summary": summary,
         "request": str(row.get("request") or "")[:_FAIL_BODY_CHARS],
         "response": body[:_FAIL_BODY_CHARS],
@@ -623,7 +711,7 @@ def render_failure_details(items: List[dict]) -> str:
         '点击「详情」展开完整请求 / 响应 Body（超长截断，原始数据见 benchmark_data.db）。</p>',
         '<table class="fail-table"><thead><tr>'
         '<th>#</th><th>档位</th><th>并发</th><th>HTTP状态码</th>'
-        '<th>错误摘要</th><th>TTLT(s)</th><th>详情</th>'
+        '<th>请求 ID</th><th>错误摘要</th><th>TTLT(s)</th><th>详情</th>'
         '</tr></thead><tbody>',
     ]
     for it in items:
@@ -632,6 +720,7 @@ def render_failure_details(items: List[dict]) -> str:
             f'<td>{escape(str(it["bucket"]))}</td>'
             f'<td>{it["parallel"]}</td>'
             f'<td>{escape(it["status"])}</td>'
+            f'<td>{escape(it.get("request_id") or "-")}</td>'
             f'<td class="summary">{escape(it["summary"])}</td>'
             f'<td>{_fmt(it["latency"])}</td>'
             f'<td><details><summary>详情</summary><div>'

@@ -410,6 +410,7 @@ def collect_failures(runs, api_url: str = ""):
             items.append({
                 "数据集": f"{bucket} ({run_tag})", "并发数": parallel, "请求URL": url,
                 "请求Body": req, "HTTP状态码": d["status"], "响应Body": d["response"],
+                "Request ID": d.get("request_id") or None,
                 "TTFT(s)": d["ttft"], "TTLT(s)": d["latency"],
                 "错误类型": ftype, "详细说明": detail,
             })
@@ -437,8 +438,8 @@ def write_failure_sheet(wb, items):
     for i, it in enumerate(items, start=1):
         r = i + 1
         vals = [i, it["数据集"], it["并发数"], it["请求URL"], "POST", None, it["请求Body"],
-                it["HTTP状态码"], it["响应Body"], None, it["TTFT(s)"], it["TTLT(s)"],
-                it["错误类型"], it["详细说明"]]
+                it["HTTP状态码"], it["响应Body"], it.get("Request ID"), it["TTFT(s)"],
+                it["TTLT(s)"], it["错误类型"], it["详细说明"]]
         for c, v in enumerate(vals, start=1):
             cell = put(r, c, v)
             if FAIL_HEADERS[c - 1] in ("TTFT(s)", "TTLT(s)") and isinstance(v, (int, float)):
