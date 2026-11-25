@@ -427,10 +427,12 @@ def write_failure_sheet(wb, items):
         cell = ws.cell(row=1, column=c, value=h)
         cell.font, cell.fill, cell.alignment = header_font, header_fill, header_align
 
+    wrap = Alignment(vertical="top", wrap_text=True)
     def put(r, c, v):
         if isinstance(v, str):
             v = ILLEGAL_CHARACTERS_RE.sub("", v)  # 控制字符会让 openpyxl 抛 IllegalCharacterError
         cell = ws.cell(row=r, column=c, value=v)
+        cell.alignment = wrap
         if isinstance(v, str):
             cell.data_type = "s"  # 以 "=" 开头的响应文本也按文本写入，不被当作公式
         return cell
@@ -444,10 +446,13 @@ def write_failure_sheet(wb, items):
             cell = put(r, c, v)
             if FAIL_HEADERS[c - 1] in ("TTFT(s)", "TTLT(s)") and isinstance(v, (int, float)):
                 cell.number_format = "0.000"
+        ws.row_dimensions[r].height = 48
 
-    widths = [6, 30, 8, 40, 8, 20, 60, 10, 60, 24, 10, 10, 14, 50]
+    # 长文本列收窄并换行，避免 URL / Body 把 Request ID 挤出屏幕
+    widths = [6, 26, 8, 32, 10, 16, 36, 12, 36, 40, 12, 12, 12, 28]
     for c, w in enumerate(widths, start=1):
         ws.column_dimensions[ws.cell(row=1, column=c).column_letter].width = w
+    ws.row_dimensions[1].height = 22
     ws.freeze_panes = "A2"
 
 
