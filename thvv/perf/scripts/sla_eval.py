@@ -378,8 +378,7 @@ SLA_FIELDS = (FIELD_SUCCESS, FIELD_AVG_TTFT, FIELD_P90_TTFT, FIELD_AVG_RATE)
 # TPS（越大越好）= 实测 / 基准；TTFT（越小越好）= 基准 / 实测。
 # 分桶按压测档位标签，不按实测 prompt token：
 #   1k–128k → ≤128K，200k → 128K–200K，512k/1m → 200K–1M。
-# KV 命中不使用上表里的线上命中率。数据集公共前缀比例就是该档能达到的上限，
-# 基准用设计命中率（_KV_DESIGN_PCT）；1m 仍是冷数据，不判定 KV。
+# KV 命中只展示，不参与标红。
 ADMISSION_RATIO = 0.60
 # (tps_p50, tps_p5, ttft_p50_s, ttft_p95_s)
 _ADMISSION_TABLES: Dict[str, Dict[str, Tuple[float, float, float, float]]] = {
@@ -587,16 +586,7 @@ def evaluate_admission_row(
                violations, failed_fields, label)
     _check_low(p95_ttft_s, base["ttft_p95"], FIELD_P95_TTFT, "P95 TTFT",
                violations, failed_fields, label)
-    # 1m 等没有设计前缀的档位不判定 KV
-    if base["kv"] is not None:
-        kv_label = (bucket or "").strip().lower() or label
-        _check_high(cache_hit_ratio, base["kv"], FIELD_CACHE_HIT, "KV 命中", "",
-                    violations, failed_fields, kv_label)
-        if FIELD_CACHE_HIT in failed_fields and cache_hit_ratio is not None:
-            violations = [v for v in violations if not v.startswith("KV 命中")]
-            ratio = cache_hit_ratio / base["kv"] if base["kv"] else 0
-            violations.append(
-                f"KV 命中 {cache_hit_ratio * 100:.2f}% / 基准 {base['kv_pct']:.2f}% = {ratio * 100:.2f}% < 60%（{kv_label}）")
+    # cache_hit_ratio 只随报告展示，不写入 failed_fields
     return {
         "mode": "admission",
         "tier": label,
@@ -708,7 +698,7 @@ def evaluate_report_row(
 
 
 def admission_threshold_rows(model: Optional[str]) -> List[Dict[str, Any]]:
-    """准入模型的三档 TPS / TTFT 基准，供 SLA 判定标准 sheet。KV 另见 kv_design_rows。"""
+    """准入模型的三档 TPS / TTFT 基准，供 SLA 判定标准 sheet。KV 不参与标红。"""
     key = admission_model_key(model)
     if key is None:
         return []

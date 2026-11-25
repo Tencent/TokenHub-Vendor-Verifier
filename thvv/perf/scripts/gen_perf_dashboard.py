@@ -445,14 +445,11 @@ white-space:pre-wrap;word-break:break-word;max-height:240px;overflow:auto}}
         _sample = sla_map.get(id(stats[0])) if stats else None
         if _sample and _sample.get("mode") == "admission" and _sample.get("thresholds"):
             _b = _sample["thresholds"]
-            _kv = (f' ｜ KV 命中 {_b["kv_pct"]:.1f}%'
-                   if _b.get("kv_pct") is not None else " ｜ KV 不判定")
             P.append(
                 f'<div class="sla-hint">准入基准（{_b["band_label"]}）：'
                 f'TPS P50 {_b["tps_p50"]:.2f} ｜ TPS P5 {_b["tps_p5"]:.2f} ｜ '
                 f'TTFT P50 {_b["ttft_p50"]:.2f}s ｜ TTFT P95 {_b["ttft_p95"]:.2f}s'
-                f'{_kv}'
-                f'（不达标行标红，未达标单元格加粗）</div>')
+                f'（KV 命中不参与标红；不达标行标红，未达标单元格加粗）</div>')
         P.append('<div class="table-wrap"><table><thead><tr>'
                  '<th>并发</th><th>总请求</th><th>成功</th><th>失败</th><th>成功率</th>'
                  '<th>Avg TTFT(s)</th><th>Min TTFT(s)</th><th>Max TTFT(s)</th>'
