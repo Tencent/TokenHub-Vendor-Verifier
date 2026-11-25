@@ -388,7 +388,7 @@ _ADMISSION_TABLES: Dict[str, Dict[str, Tuple[float, float, float, float]]] = {
         "128_200k": (63.8, 36.8, 4.16, 12.32),
         "200k_1m": (65.3, 37.7, 5.34, 16.04),
     },
-    # flashx、flash 必须写在 glm-5.3 前面，避免被更短的名字截走
+    # 匹配按去掉横线后的最长键，flashx 长于 flash，glm-5.3-flash 长于 glm-5.3
     "glm-5.3-flashx": {
         "le_128k": (178.5, 116.8, 1.80, 4.32),
         "128_200k": (186.5, 119.4, 2.24, 4.92),
@@ -445,15 +445,20 @@ def _bucket_tokens(bucket: Optional[str]) -> int:
     return n * (1024 if m.group(2) == "k" else 1024 * 1024)
 
 
+def _norm_model_name(name: Optional[str]) -> str:
+    """去掉大小写、下划线和横线。接入点常写成 flash-x，和 flashx 是同一个模型。"""
+    return (name or "").lower().replace("_", "").replace("-", "")
+
+
 def admission_model_key(model: Optional[str]) -> Optional[str]:
-    """模型名命中准入表时返回表键；flashx 优先于 flash。"""
-    low = (model or "").lower().replace("_", "-")
+    """模型名命中准入表时返回表键。按规范化后的最长键匹配，flashx 长于 flash。"""
+    low = _norm_model_name(model)
     if not low:
         return None
-    for key in _ADMISSION_KEYS:
-        if key in low:
-            return key
-    return None
+    hits = [key for key in _ADMISSION_KEYS if _norm_model_name(key) in low]
+    if not hits:
+        return None
+    return max(hits, key=lambda key: len(_norm_model_name(key)))
 
 
 def admission_band(bucket: Optional[str]) -> Optional[str]:
@@ -628,7 +633,7 @@ def evaluate_report_row(
 
     命中 kimi-k3.1-pro / glm-5.3-flashx / glm-5.3-flash / glm-5.3 /
     deepseek-v4.1-flash 时改走分桶准入（相对基准 ≥ 60%）。
-    glm-5.3 写在 flashx、flash 之后，避免把这两个名字截走。
+    名字会先去掉横线再按最长键匹配，因此 ep-glm-5.3-flash-x 归到 flashx。
 
     返回：
       {"tier", "pass", "violations": [...], "failed_fields": set(...), "thresholds"}
