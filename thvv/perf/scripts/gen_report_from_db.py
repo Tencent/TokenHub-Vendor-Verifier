@@ -481,7 +481,7 @@ def write_sla_sheet(wb, model: str = ""):
         ws.cell(row=note_row, column=2, value=(
             "TPS P50、TPS P5 = 实测/基准；TTFT P50、TTFT P95 = 基准/实测。"
             "1k–128k 用 ≤128K，200k 用 128K–200K，512k/1m 用 200K–1M。"
-            "KV 命中只展示，不参与标红。"
+            "成功率不到 100% 整行标红。KV 命中只展示，不参与标红。"
             "任一指标不够则整行标红，未达标单元格深红加粗。"
         ))
         for c, w in enumerate([18, 16, 14, 14, 16, 16], start=1):
@@ -495,8 +495,9 @@ def write_sla_sheet(wb, model: str = ""):
     ws.cell(row=1, column=2).fill = header_fill
     ws.cell(row=2, column=1, value="已暂停").font = Font(bold=True)
     ws.cell(row=2, column=2, value=(
-        "绝对阈值标红已暂停：成功率 100%、Avg TTFT、P90 TTFT、Avg Rate > 30 t/s 暂不参与标红。"
-        "kimi-k3.1-pro、glm-5.3-flashx、glm-5.3-flash、glm-5.3、deepseek-v4.1-flash 仍按分桶基准的 60% 标红。"
+        "绝对阈值里 Avg TTFT、P90 TTFT、Avg Rate > 30 t/s 暂不参与标红。"
+        "成功率不到 100% 仍整行标红。"
+        "kimi-k3.1-pro、glm-5.3-flashx、glm-5.3-flash、glm-5.3、deepseek-v4.1-flash 另按分桶基准的 60% 标红。"
     ))
     ws.column_dimensions["A"].width = 14
     ws.column_dimensions["B"].width = 88

@@ -327,7 +327,7 @@ def render(dbs: List[Tuple[str, str, int, int, str]], title: str,
     overall_fail = sum(s["failed"] for s in all_stats)
     overall_rate = (1 - overall_fail / overall_total) if overall_total else 0.0
 
-    # SLA 判定（与 Excel 报告同口径：成功率 100% + 档位 TTFT 阈值 + 吞吐下限）
+    # SLA 判定与 Excel 共用：成功率不到 100% 标红；准入模型另看分桶 TPS/TTFT
     def _sla_of(st: dict) -> dict:
         return evaluate_report_row(
             avg_prompt_tokens=st.get("prompt_tokens_mean"),
@@ -412,7 +412,7 @@ white-space:pre-wrap;word-break:break-word;max-height:240px;overflow:auto}}
   <div class="card info"><div class="lbl">总请求数</div><div class="val">{overall_total}</div></div>
   <div class="card ok"><div class="lbl">成功</div><div class="val">{overall_total - overall_fail}</div></div>
   <div class="card warn"><div class="lbl">失败</div><div class="val">{overall_fail}</div></div>
-  <div class="card {'ok' if overall_rate >= 0.95 else 'warn'}"><div class="lbl">总成功率</div>
+  <div class="card {'ok' if overall_rate + 1e-9 >= 1.0 else 'warn'}"><div class="lbl">总成功率</div>
     <div class="val">{overall_rate:.1%}</div></div>
   <div class="card {'ok' if not bad_stats else 'warn'}"><div class="lbl">SLA 不达标</div>
     <div class="val">{len(bad_stats)} / {len(all_stats)}</div></div>
@@ -449,7 +449,7 @@ white-space:pre-wrap;word-break:break-word;max-height:240px;overflow:auto}}
                 f'<div class="sla-hint">准入基准（{_b["band_label"]}）：'
                 f'TPS P50 {_b["tps_p50"]:.2f} ｜ TPS P5 {_b["tps_p5"]:.2f} ｜ '
                 f'TTFT P50 {_b["ttft_p50"]:.2f}s ｜ TTFT P95 {_b["ttft_p95"]:.2f}s'
-                f'（KV 命中不参与标红；不达标行标红，未达标单元格加粗）</div>')
+                f'（成功率须 100%；KV 命中不参与标红；不达标行标红，未达标单元格加粗）</div>')
         P.append('<div class="table-wrap"><table><thead><tr>'
                  '<th>并发</th><th>总请求</th><th>成功</th><th>失败</th><th>成功率</th>'
                  '<th>Avg TTFT(s)</th><th>Min TTFT(s)</th><th>Max TTFT(s)</th>'
@@ -464,7 +464,7 @@ white-space:pre-wrap;word-break:break-word;max-height:240px;overflow:auto}}
         for s in stats:
             sla = sla_map[id(s)]
             rate = s["success_rate"]
-            cls = "good" if rate >= 0.95 else ("bad" if rate < 0.8 else "")
+            cls = "good" if rate + 1e-9 >= 1.0 else "bad"
             cells = [
                 str(s["parallel"]), str(s["total"]), str(s["success"]), str(s["failed"]),
                 f'<span class="{cls}">{rate:.2%}</span>',

@@ -597,6 +597,19 @@ def evaluate_admission_row(
     }
 
 
+def _mark_success_rate(result: Dict[str, Any], success_rate_f: Optional[float]) -> Dict[str, Any]:
+    """成功率不到 100% 则整行不达标，成功率单元格进入 failed_fields。"""
+    try:
+        rate_f = None if success_rate_f is None else float(success_rate_f)
+    except (TypeError, ValueError):
+        rate_f = None
+    if rate_f is not None and rate_f + 1e-9 < 1.0:
+        result["violations"].append(f"成功率 {rate_f * 100:.2f}% < 100%")
+        result["failed_fields"].add(FIELD_SUCCESS)
+        result["pass"] = False
+    return result
+
+
 def evaluate_report_row(
     avg_prompt_tokens: Optional[float],
     success_rate_f: Optional[float],
@@ -613,13 +626,9 @@ def evaluate_report_row(
 ) -> Dict[str, Any]:
     """单行性能指标的验收判定，给 gen_report_from_db / gen_perf_dashboard 标红用。
 
-    判定口径与 evaluate_sla() 一致：
-      - 成功率必须 100%
-      - Avg TTFT ≤ 档位 P50 阈值
-      - P90 TTFT ≤ 档位 P90 阈值
-      - Avg Rate(t/s) > RATE_MIN_TOKENS_PER_SEC（即 OTPS 下限 30 t/s）
-
-    P5 Rate 只出现在报告列里，不参与达标判定。
+    成功率不到 100% 时整行不达标，HTML 与 Excel 都会把成功率单元格标红。
+    命中准入模型时，另外要求 TPS / TTFT 相对分桶基准 ≥ 60%。
+    绝对阈值（Avg TTFT、P90 TTFT、Avg Rate > 30 t/s）仍暂停。
 
     命中 kimi-k3.1-pro / glm-5.3-flashx / glm-5.3-flash / glm-5.3 /
     deepseek-v4.1-flash 时改走分桶准入（相对基准 ≥ 60%）。
@@ -632,17 +641,17 @@ def evaluate_report_row(
         model, bucket, p50_rate_tps, p5_rate_tps, p50_ttft_s, p95_ttft_s, cache_hit_ratio,
     )
     if admitted is not None:
-        return admitted
+        return _mark_success_rate(admitted, success_rate_f)
 
     if not ABSOLUTE_SLA_ENABLED:
-        return {
+        return _mark_success_rate({
             "mode": "disabled",
             "tier": classify_tier(avg_prompt_tokens),
             "pass": True,
             "violations": [],
             "failed_fields": set(),
             "thresholds": None,
-        }
+        }, success_rate_f)
 
     violations: List[str] = []
     failed_fields: set = set()
